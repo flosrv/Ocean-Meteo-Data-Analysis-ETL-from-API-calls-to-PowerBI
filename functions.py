@@ -2,7 +2,6 @@ from imports import *
 
 Base = declarative_base()
 
-
 def convert_df_columns(df):
     """
     Convertit chaque colonne en son type approprié sans modifier les données
@@ -640,26 +639,6 @@ def count_files_in_directory(output_dir):
     except Exception as e:
         print(f"Erreur dans la fonction count_files_in_directory: {e}")
 
-def get_day_time(col):
-    # Extraire l'heure et le mois directement de l'objet Timestamp
-    hour = col.hour
-    
-    # Initialiser une variable pour le moment de la journée
-    if 0 <= hour < 6:
-        daytime = 'Night'
-    elif 6 <= hour < 12:
-        daytime = 'Morning'
-    elif 12 <= hour < 18:
-        daytime = 'Afternoon'
-    elif 18 <= hour < 24:
-        daytime = 'Evening'
-    
-    # Extraire le mois directement
-    month = col.month
-    
-    # Retourner un tuple avec le moment de la journée et le mois
-    return daytime, month
-
 def process_datetime_column(df, column):
     # Convertir la colonne en chaîne de caractères au tout début
     df[column] = df[column].astype(str)
@@ -746,18 +725,24 @@ def convert_columns_to_numeric(df, cols_to_convert):
     print("Columns after conversion:", df.columns)
     return df
 
-def display_row_values(df):
-    # Calculer la largeur maximale pour chaque colonne afin de bien aligner les valeurs
-    column_widths = [max(df[col].astype(str).apply(len).max(), len(col)) for col in df.columns]
+def display_row_values(df, columns=None):
+    # Si aucune colonne n'est spécifiée, afficher toutes les colonnes
+    if columns is None:
+        columns = df.columns.tolist()
+
+    if isinstance(columns, str):
+        columns = [columns]
+    # Calculer la largeur maximale pour chaque colonne spécifiée
+    column_widths = [max(df[col].astype(str).apply(len).max(), len(col)) for col in columns]
 
     # Afficher les noms des colonnes, en tenant compte des largeurs maximales
-    column_headers = [col.ljust(column_widths[i]) for i, col in enumerate(df.columns)]
+    column_headers = [col.ljust(column_widths[i]) for i, col in enumerate(columns)]
     print("  |  ".join(column_headers))
-    print("-" * (sum(column_widths) + (len(df.columns) - 1) * 4))  # Ligne de séparation
+    print("-" * (sum(column_widths) + (len(columns) - 1) * 4))  # Ligne de séparation
 
-    # Afficher les 10 premières valeurs sous chaque colonne, alignées
+    # Afficher les 10 premières valeurs sous chaque colonne spécifiée, alignées
     for i in range(min(10, len(df))):  # Affiche jusqu'à 10 lignes ou le nombre de lignes disponibles
-        row_values = [str(df.iloc[i, col]).ljust(column_widths[col]) for col in range(len(df.columns))]
+        row_values = [str(df.iloc[i, df.columns.get_loc(col)]).ljust(column_widths[j]) for j, col in enumerate(columns)]
         print("  |  ".join(row_values))
 
 def rename_columns(df, columns):
@@ -787,6 +772,79 @@ def rename_columns(df, columns):
     
     return df
 
+def calculate_closer_probabilities(df, columns):
+    """
+    Calcule les probabilités que chaque colonne d'un DataFrame soit la plus proche des autres,
+    selon l'idée de la "wisdom of the crowd".
 
+    :param df: DataFrame contenant les données.
+    :param columns: Liste des noms des colonnes à comparer entre elles.
+    :return: Dictionnaire des probabilités pour chaque colonne.
+    """
+    
+    # Créer un dictionnaire pour stocker les résultats des distances
+    distances = {}
+    
+    # Calculer les distances entre chaque paire de colonnes
+    for i, col1 in enumerate(columns):
+        for j, col2 in enumerate(columns):
+            if i < j:  # Calculer les distances uniquement une fois pour chaque paire
+                dist_column = f'dist_{col1}_{col2}'
+                distances[dist_column] = np.abs(df[col1] - df[col2])
+    
+    # Ajouter les distances au DataFrame
+    for dist_column, values in distances.items():
+        df[dist_column] = values
+    
+    # Créer un dictionnaire pour stocker si une colonne est plus proche des autres
+    closer = {col: [] for col in columns}
+    
+    # Pour chaque ligne, déterminer quelle colonne est la plus proche des autres
+    for _, row in df.iterrows():
+        for col1 in columns:
+            # Trouver les distances entre la colonne 'col1' et les autres
+            dist_to_others = [row[f'dist_{col1}_{col2}'] for col2 in columns if col1 != col2]
+            # Vérifier si 'col1' est la plus proche de toutes les autres colonnes
+            if row[f'dist_{col1}_{col2}'] == min(dist_to_others):
+                closer[col1].append(True)
+            else:
+                closer[col1].append(False)
+    
+    # Calculer les probabilités pour chaque colonne d'être la plus proche
+    probabilities = {col: np.mean(closer[col]).round(3) for col in columns}
+    
+    return probabilities
 
+def add_day_period_and_month(df, datetime_column='Datetime'):
+    """
+    Cette fonction ajoute deux colonnes :
+    - 'Day Period' : Moment de la journée ('Morning', 'Afternoon', 'Evening', 'Night')
+    - 'Month' : Le mois basé sur la colonne 'Datetime'
+    
+    Parameters:
+    df (pandas.DataFrame): Le DataFrame contenant la colonne 'Datetime'
+    datetime_column (str): Le nom de la colonne contenant les informations de date et d'heure. Par défaut, 'Datetime'
+    
+    Returns:
+    pandas.DataFrame: Le DataFrame avec les nouvelles colonnes ajoutées
+    """
+    
+    # Assurez-vous que la colonne 'Datetime' est bien de type datetime
+    df[datetime_column] = pd.to_datetime(df[datetime_column], errors='coerce')
+    
+    # Ajouter la colonne 'Day Period' (Moment de la journée)
+    def get_day_period(hour):
+        if 6 <= hour < 12:
+            return 'Morning'
+        elif 12 <= hour < 18:
+            return 'Afternoon'
+        elif 18 <= hour < 22:
+            return 'Evening'
+        else:
+            return 'Night'
+    
+    # Ajouter la colonne 'Day Period' en appliquant la fonction sur l'heure
+    df['Day Period'] = df[datetime_column].dt.hour.apply(get_day_period)
+    
+    return df
 
