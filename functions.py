@@ -671,26 +671,6 @@ def convert_columns_to_numeric(df, cols_to_convert):
     print("Columns after conversion:", df.columns)
     return df
 
-def display_row_values(df, columns=None):
-    # Si aucune colonne n'est spécifiée, afficher toutes les colonnes
-    if columns is None:
-        columns = df.columns.tolist()
-
-    if isinstance(columns, str):
-        columns = [columns]
-    # Calculer la largeur maximale pour chaque colonne spécifiée
-    column_widths = [max(df[col].astype(str).apply(len).max(), len(col)) for col in columns]
-
-    # Afficher les noms des colonnes, en tenant compte des largeurs maximales
-    column_headers = [col.ljust(column_widths[i]) for i, col in enumerate(columns)]
-    print("  |  ".join(column_headers))
-    print("-" * (sum(column_widths) + (len(columns) - 1) * 4))  # Ligne de séparation
-
-    # Afficher les 10 premières valeurs sous chaque colonne spécifiée, alignées
-    for i in range(min(10, len(df))):  # Affiche jusqu'à 10 lignes ou le nombre de lignes disponibles
-        row_values = [str(df.iloc[i, df.columns.get_loc(col)]).ljust(column_widths[j]) for j, col in enumerate(columns)]
-        print("  |  ".join(row_values))
-
 def rename_columns(df, columns):
     # Assurez-vous que l'entrée est bien un DataFrame
     if not isinstance(df, pd.DataFrame):
@@ -1002,3 +982,22 @@ def create_unique_id(df, columns):
 
     return df
 
+def display_row_values(df, columns=None):
+    # Si aucune colonne n'est spécifiée, afficher toutes les colonnes
+    if columns is None:
+        columns = df.columns.tolist()
+
+    if isinstance(columns, str):
+        columns = [columns]
+    # Calculer la largeur maximale pour chaque colonne spécifiée
+    column_widths = [max(df[col].astype(str).apply(len).max(), len(col)) for col in columns]
+
+    # Afficher les noms des colonnes, en tenant compte des largeurs maximales
+    column_headers = [col.ljust(column_widths[i]) for i, col in enumerate(columns)]
+    print("  |  ".join(column_headers))
+    print("-" * (sum(column_widths) + (len(columns) - 1) * 4))  # Ligne de séparation
+
+    # Afficher les 10 premières valeurs sous chaque colonne spécifiée, alignées
+    for i in range(min(10, len(df))):  # Affiche jusqu'à 10 lignes ou le nombre de lignes disponibles
+        row_values = [str(df.iloc[i, df.columns.get_loc(col)]).ljust(column_widths[j]) for j, col in enumerate(columns)]
+        print("  |  ".join(row_values))
