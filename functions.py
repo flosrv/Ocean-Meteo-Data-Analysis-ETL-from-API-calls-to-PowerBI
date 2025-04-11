@@ -1,7 +1,5 @@
 from imports import *
 
-Base = declarative_base()
-
 def convert_df_columns(df):
     """
     Convertit chaque colonne en son type approprié sans modifier les données
