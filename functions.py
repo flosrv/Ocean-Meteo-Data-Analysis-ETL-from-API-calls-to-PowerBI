@@ -80,36 +80,59 @@ def create_table_in_mysql(df: pd.DataFrame, table_name: str, engine):
             result = connection.execute(text(check_table_sql))
             if result.fetchone():
                 print(f"⚠️ La table '{table_name}' existe déjà dans MySQL.")
-                return  # Ne pas recréer la table si elle existe déjà
+            else:
+                # Définition des colonnes
+                column_definitions = []
+                for column_name, dtype in df.dtypes.items():
+                    if dtype == 'object': 
+                        column_type = "VARCHAR(255)"
+                    elif dtype == 'int64':  
+                        column_type = "INT"
+                    elif dtype == 'float64': 
+                        column_type = "FLOAT"
+                    elif dtype == 'datetime64[ns]': 
+                        column_type = "DATETIME"
+                    elif dtype == 'datetime64[ns, UTC]': 
+                        column_type = "DATETIME"
+                    elif dtype == 'timedelta64[ns]':  
+                        column_type = "TIME"
+                    elif dtype == 'bool':  
+                        column_type = "BOOLEAN"
+                    elif dtype == 'time64[ns]': 
+                        column_type = "TIME"
+                    else:
+                        column_type = "VARCHAR(255)" 
 
-            # Définition des colonnes
-            column_definitions = []
-            for column_name, dtype in df.dtypes.items():
-                if dtype == 'object': 
-                    column_type = "VARCHAR(255)"
-                elif dtype == 'int64':  
-                    column_type = "INT"
-                elif dtype == 'float64': 
-                    column_type = "FLOAT"
-                elif dtype == 'datetime64[ns]': 
-                    column_type = "DATETIME"
-                elif dtype == 'datetime64[ns, UTC]': 
-                    column_type = "DATETIME"
-                elif dtype == 'timedelta64[ns]':  
-                    column_type = "TIME"
-                elif dtype == 'bool':  
-                    column_type = "BOOLEAN"
-                elif dtype == 'time64[ns]': 
-                    column_type = "TIME"
+                    column_definitions.append(f"`{column_name}` {column_type}")
+
+                # Création de la table
+                create_table_sql = f"CREATE TABLE `{table_name}` ({', '.join(column_definitions)});"
+                connection.execute(text(create_table_sql))
+                print(f"✅ Table '{table_name}' créée avec succès dans MySQL.")
+            
+            # Charger les données sans doublons
+            # Vérifier les doublons
+            for index, row in df.iterrows():
+                # Créer une requête d'insertion
+                insert_sql = f"INSERT INTO `{table_name}` ({', '.join(df.columns)}) VALUES ({', '.join(['%s'] * len(df.columns))});"
+
+                # Vérifier si la ligne existe déjà dans la table
+                check_duplicate_sql = f"SELECT COUNT(*) FROM `{table_name}` WHERE "
+                check_duplicate_conditions = []
+                for column in df.columns:
+                    check_duplicate_conditions.append(f"`{column}` = %s")
+                check_duplicate_sql += " AND ".join(check_duplicate_conditions)
+
+                # Exécuter la vérification des doublons
+                duplicate_check_result = connection.execute(text(check_duplicate_sql), tuple(row))
+                duplicate_count = duplicate_check_result.fetchone()[0]
+
+                # Si la ligne n'existe pas déjà, l'insérer
+                if duplicate_count == 0:
+                    connection.execute(text(insert_sql), tuple(row))
+                    print(f"✅ Ligne insérée dans la table '{table_name}'.")
                 else:
-                    column_type = "VARCHAR(255)" 
-
-                column_definitions.append(f"`{column_name}` {column_type}")
-
-            # Création de la table
-            create_table_sql = f"CREATE TABLE `{table_name}` ({', '.join(column_definitions)});"
-            connection.execute(text(create_table_sql))
-            print(f"✅ Table '{table_name}' créée avec succès dans MySQL.")
+                    print(f"⚠️ Doublon détecté pour la ligne : {row}. Aucune insertion effectuée.")
 
     except Exception as e:
         print(f"❌ Erreur lors de la création de la table : {e}")
@@ -441,7 +464,7 @@ def parse_buoy_json(buoy_metadata):
     print(f"🌡️ Sea Temp Depth : {sea_temp_depth}")
     
     Barometer_elevation = clean_numeric(buoy_metadata.get("Barometer elevation"))
-    print(f"🌬️ Barometer Elevation : {Barometer_elevation}")
+    print(f"🌬️ Barometer Elevation (m): {Barometer_elevation}")
     
     Anemometer_height = clean_numeric(buoy_metadata.get("Anemometer height"))
     print(f"💨 Anemometer Height : {Anemometer_height}")
@@ -520,83 +543,6 @@ def convert_coordinates(lat, lon):
         lon_value = -lon_value
 
     return round(lat_value, 2), round(lon_value, 2)
-
-def drop_tables(conn, schema_name, drop_schema=False, table_name_filter=None):
-    try:
-        # Créer un inspecteur pour vérifier les schémas
-        inspector = inspect(conn)
-        schemas = inspector.get_schema_names()
-        
-        if schema_name not in schemas:
-            print(f"Schema '{schema_name}' does not exist.")
-            return
-        
-        # Créer un objet metadata et charger toutes les tables
-        metadata = MetaData(bind=conn)
-        metadata.reflect(schema=schema_name)
-        
-        # Obtenir la liste des tables du schéma
-        print(f"Fetching tables from schema '{schema_name}'...")
-        tables = metadata.tables
-        
-        # Filtrer les tables si un filtre de nom est fourni
-        if table_name_filter:
-            filtered_tables = {name: table for name, table in tables.items() if table_name_filter.lower() in name.lower()}
-            if not filtered_tables:
-                print(f"No tables found matching the filter '{table_name_filter}' in schema '{schema_name}'.")
-                return
-            print(f"Tables matching the filter '{table_name_filter}':\n{filtered_tables.keys()}")
-        else:
-            filtered_tables = tables
-            print(f"Tables found in schema '{schema_name}':\n{filtered_tables.keys()}")
-        
-        # Vérifier les verrous existants avant de continuer
-        print("Checking for existing locks...")
-        query_locks = """
-            SELECT
-                pg_stat_activity.pid,
-                pg_stat_activity.state,
-                pg_locks.mode,
-                pg_class.relname,
-                pg_stat_activity.query
-            FROM
-                pg_stat_activity
-            JOIN
-                pg_locks ON pg_stat_activity.pid = pg_locks.pid
-            JOIN
-                pg_class ON pg_locks.relation = pg_class.oid
-            WHERE
-                pg_stat_activity.state = 'idle in transaction';
-        """
-        locks = pd.read_sql(query_locks, conn)
-        
-        if not locks.empty:
-            print(f"Found active locks:\n{locks}")
-            print("Waiting 5 seconds before continuing...")
-            time.sleep(5)  # Attendre 5 secondes avant de tenter la suppression des tables
-        
-        # Supprimer les tables une par une dans des transactions distinctes
-        with conn.begin():  # Utilisation du bloc `with conn` pour garantir la gestion des transactions
-            for table_name, table in filtered_tables.items():
-                try:
-                    # Supprimer la table
-                    print(f"\nDropping table '{table_name}'...")
-                    conn.execute(text(f'DROP TABLE IF EXISTS "{schema_name}"."{table_name}" CASCADE'))
-                    print(f"Table '{table_name}' dropped.")
-                    time.sleep(1)  # Délai d'une seconde entre chaque suppression
-                except Exception as e:
-                    print(f"Error dropping table '{table_name}': {e}")
-
-            # Si l'argument drop_schema est True, supprimer également le schéma
-            if drop_schema:
-                print(f"Dropping schema '{schema_name}'...")
-                conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema_name}" CASCADE'))
-                print(f"Schema '{schema_name}' and all its objects have been dropped.")
-            else:
-                print(f"\nTables dropped from schema '{schema_name}', but schema not removed.")
-
-    except Exception as e:
-        print(f"Error dropping tables in schema '{schema_name}': {e}")
 
 def count_files_in_directory(output_dir):
     try:
@@ -815,11 +761,12 @@ def calculate_closer_probabilities(df, columns):
     
     return probabilities
 
-def add_day_period_and_month(df, datetime_column='Datetime'):
+def add_hour_day_period_and_month(df, datetime_column='Datetime'):
     """
-    Cette fonction ajoute deux colonnes :
+    Cette fonction ajoute trois colonnes :
     - 'Day Period' : Moment de la journée ('Morning', 'Afternoon', 'Evening', 'Night')
     - 'Month' : Le mois basé sur la colonne 'Datetime'
+    - 'Hour' : L'heure extraite de la colonne 'Datetime'
     
     Parameters:
     df (pandas.DataFrame): Le DataFrame contenant la colonne 'Datetime'
@@ -832,19 +779,226 @@ def add_day_period_and_month(df, datetime_column='Datetime'):
     # Assurez-vous que la colonne 'Datetime' est bien de type datetime
     df[datetime_column] = pd.to_datetime(df[datetime_column], errors='coerce')
     
-    # Ajouter la colonne 'Day Period' (Moment de la journée)
-    def get_day_period(hour):
-        if 6 <= hour < 12:
-            return 'Morning'
-        elif 12 <= hour < 18:
-            return 'Afternoon'
-        elif 18 <= hour < 22:
-            return 'Evening'
+    # Vérifier si la colonne 'Day Period' existe déjà, sinon l'ajouter
+    if 'DayPeriod' not in df.columns:
+        # Ajouter la colonne 'Day Period' (Moment de la journée)
+        def get_day_period(hour):
+            if 6 <= hour < 12:
+                return 'Morning'
+            elif 12 <= hour < 18:
+                return 'Afternoon'
+            elif 18 <= hour < 22:
+                return 'Evening'
+            else:
+                return 'Night'
+        
+        df['DayPeriod'] = df[datetime_column].dt.hour.apply(get_day_period)
+    
+    # Vérifier si la colonne 'Month' existe déjà, sinon l'ajouter
+    if 'Month' not in df.columns:
+        df['Month'] = df[datetime_column].dt.month
+    
+    # Vérifier si la colonne 'Hour' existe déjà, sinon l'ajouter
+    if 'Hour' not in df.columns:
+        df['Hour'] = df[datetime_column].dt.hour
+    
+    return df
+
+def create_table_in_mysql(df: pd.DataFrame, table_name: str, engine):
+    # Vérifier si la table existe déjà
+    check_table_sql = f"SHOW TABLES LIKE '{table_name}';"
+
+    try:
+        with engine.connect() as connection:
+            result = connection.execute(text(check_table_sql))
+            if result.fetchone():
+                print(f"⚠️ La table '{table_name}' existe déjà dans MySQL.")
+            else:
+                # Définition des colonnes
+                column_definitions = []
+                for column_name, dtype in df.dtypes.items():
+                    if dtype == 'object': 
+                        column_type = "VARCHAR(255)"
+                    elif dtype == 'int64':  
+                        column_type = "INT"
+                    elif dtype == 'float64': 
+                        column_type = "FLOAT"
+                    elif dtype == 'datetime64[ns]': 
+                        column_type = "DATETIME"
+                    elif dtype == 'datetime64[ns, UTC]': 
+                        column_type = "DATETIME"
+                    elif dtype == 'timedelta64[ns]':  
+                        column_type = "TIME"
+                    elif dtype == 'bool':  
+                        column_type = "BOOLEAN"
+                    elif dtype == 'time64[ns]': 
+                        column_type = "TIME"
+                    else:
+                        column_type = "VARCHAR(255)" 
+
+                    column_definitions.append(f"`{column_name}` {column_type}")
+
+                # Création de la table
+                create_table_sql = f"CREATE TABLE `{table_name}` ({', '.join(column_definitions)});"
+                connection.execute(text(create_table_sql))
+                print(f"✅ Table '{table_name}' créée avec succès dans MySQL.")
+                
+    except Exception as e:
+        print(f"❌ Erreur lors de la création de la table : {e}")
+
+def afficher_info_bouees_aleatoires(buoy_datas, prefix=None, df_wanted=None):
+    """
+    Affiche les informations de DataFrames (marine et/ou météo) de deux bouées choisies aléatoirement.
+    """
+    # Sélection de deux bouées au hasard
+    sample_buoy_id_marine = random.choice(list(buoy_datas.keys()))
+    sample_buoy_id_meteo = random.choice(list(buoy_datas.keys()))
+
+    # Choix du préfixe (ex: "Cleaned")
+    marine_key = f"{prefix} Marine" if prefix else "Marine"
+    meteo_key = f"{prefix} Meteo" if prefix else "Meteo"
+
+    sample_marine_df = buoy_datas[sample_buoy_id_marine].get(marine_key)
+    sample_meteo_df = buoy_datas[sample_buoy_id_meteo].get(meteo_key)
+
+    df_marine_name = "Marine DataFrame"
+    df_meteo_name = "Météo DataFrame"
+
+    if df_wanted is None or df_wanted.lower() == "marine":
+        if sample_marine_df is not None and not sample_marine_df.empty:
+            print(f"🌊 {df_marine_name} pour {sample_buoy_id_marine}:")
+            print(sample_marine_df.info())
         else:
-            return 'Night'
+            print(f"⚠️ {df_marine_name} pour {sample_buoy_id_marine} : Aucune donnée")
+
+    if df_wanted is None or df_wanted.lower() == "meteo":
+        if sample_meteo_df is not None and not sample_meteo_df.empty:
+            print(f"☁️ {df_meteo_name} pour {sample_buoy_id_meteo}:")
+            print(sample_meteo_df.info())
+        else:
+            print(f"⚠️ {df_meteo_name} pour {sample_buoy_id_meteo} : Aucune donnée")
+
+def display_buoys_missing_df_counts(buoy_datas, prefix=None, df_wanted=None):
+    total = len(buoy_datas)
+    marine_empty = 0
+    meteo_empty = 0
+
+    marine_key = f"{prefix} Marine" if prefix else "Marine"
+    meteo_key = f"{prefix} Meteo" if prefix else "Meteo"
+
+    for buoy_id, data in buoy_datas.items():
+        df_marine = data.get(marine_key)
+        df_meteo = data.get(meteo_key)
+
+        if (df_wanted is None or df_wanted.lower() == "marine") and (df_marine is None or df_marine.empty):
+            marine_empty += 1
+
+        if (df_wanted is None or df_wanted.lower() == "meteo") and (df_meteo is None or df_meteo.empty):
+            meteo_empty += 1
+
+    if df_wanted is None or df_wanted.lower() == "marine":
+        print(f"\n🌊 Nombre de bouées sans données '{marine_key}' : {marine_empty}/{total}")
+
+    if df_wanted is None or df_wanted.lower() == "meteo":
+        print(f"\n☁️ Nombre de bouées sans données '{meteo_key}' : {meteo_empty}/{total}")
+
+def insert_new_rows(df: pd.DataFrame, engine, table: str, ref_column: str):
+    """
+    Insère les nouvelles lignes dans la table MySQL après avoir vérifié si les IDs uniques existent déjà.
+
+    Args:
+    - df (pd.DataFrame): Le DataFrame contenant les nouvelles données.
+    - engine (SQLAlchemy Engine): L'engine SQLAlchemy pour se connecter à la base de données.
+    - table (str): Le nom de la table dans laquelle insérer les données.
+    - ref_column (str): Le nom de la colonne à utiliser comme référence (ID unique).
+    """
+    try:
+        print("🔍 Connexion à la base de données en cours...")
+
+        with engine.connect() as connection:
+            # Vérifier si la table est vide
+            print("🧮 Vérification si la table est vide...")
+            check_empty_sql = f"SELECT COUNT(*) FROM `{table}`"
+            result = connection.execute(text(check_empty_sql))
+            row_count = result.fetchone()[0]
+
+            if row_count == 0:
+                # La table est vide, insérer toutes les données avec compteur
+                print("⚡ La table est vide. Insertion de toutes les données avec suivi...")
+                total = len(df)
+                inserted = 0
+                for _, row in df.iterrows():
+                    row_df = pd.DataFrame([row])
+                    row_df.to_sql(table, con=engine, if_exists='append', index=False)
+                    inserted += 1
+                    sys.stdout.write(f"\r⏳ Insertion en cours : {inserted}/{total}")
+                    sys.stdout.flush()
+                print("\n✅ Toutes les lignes ont été insérées dans la table.")
+            else:
+                # Sinon, récupérer les IDs existants dans la table
+                print(f"🔎 Récupération des {ref_column} existants dans la table...")
+                check_existing_ids_sql = f"SELECT `{ref_column}` FROM `{table}`"
+                result = connection.execute(text(check_existing_ids_sql))
+                existing_ids = {row[0] for row in result.fetchall()}
+                print(f"🧑‍💻 {len(existing_ids)} {ref_column} existants ont été trouvés dans la table.")
+
+                # Filtrage des lignes du DataFrame
+                print("🔄 Filtrage des nouvelles lignes à insérer...")
+                new_rows_df = df[~df[ref_column].isin(existing_ids)]
+
+                if not new_rows_df.empty:
+                    total = len(new_rows_df)
+                    print(f"🚀 Insertion de {total} nouvelles lignes...")
+                    inserted = 0
+                    for _, row in new_rows_df.iterrows():
+                        row_df = pd.DataFrame([row])
+                        row_df.to_sql(table, con=engine, if_exists='append', index=False)
+                        inserted += 1
+                        sys.stdout.write(f"\r⏳ Insertion en cours : {inserted}/{total}")
+                        sys.stdout.flush()
+                    print("\n✅ Insertion terminée avec succès.")
+                else:
+                    print(f"⚠️ Aucune nouvelle ligne à insérer, tous les {ref_column} sont déjà présents.")
+    except Exception as e:
+        print(f"❌ Erreur lors de l'insertion dans la table '{table}': {e}")
+        
+def create_unique_id(df, columns):
+
+    """
+    Crée un identifiant unique basé sur des colonnes spécifiées,
+    avec une gestion spéciale pour les colonnes de type datetime.
     
-    # Ajouter la colonne 'Day Period' en appliquant la fonction sur l'heure
-    df['Day Period'] = df[datetime_column].dt.hour.apply(get_day_period)
+    Args:
+    df (pandas.DataFrame): DataFrame sur lequel opérer.
+    columns (list): Liste des colonnes à utiliser pour créer l'ID unique.
     
+    Returns:
+    pandas.DataFrame: DataFrame avec un identifiant unique créé et ordonné.
+    """
+    
+    def process_datetime_column(col):
+        """
+        Formate une colonne datetime en une chaîne d'entiers avec année, mois, jour, heure, minute, etc.
+        """
+        if pd.api.types.is_datetime64_any_dtype(df[col]):
+            return df[col].apply(lambda x: f"{x.year:04d}{x.month:02d}{x.day:02d}{x.hour:02d}{x.minute:02d}{x.second:02d}")
+        return df[col].astype(str)
+
+    # Créer une liste de colonnes transformées
+    unique_columns = []
+    
+    # Parcourir les colonnes spécifiées
+    for col in columns:
+        if pd.api.types.is_datetime64_any_dtype(df[col]):  # Si la colonne est de type datetime
+            unique_columns.append(process_datetime_column(col))  # Applique le format datetime
+        else:
+            unique_columns.append(df[col].astype(str))  # Sinon, traite comme une chaîne de caractères
+    
+    # Fusionner toutes les colonnes pour créer l'ID unique
+    df['Unique ID'] = pd.concat(unique_columns, axis=1).agg(''.join, axis=1)
+
+    # Placer la colonne 'Unique ID' en première position
+    df = df[['Unique ID'] + [col for col in df.columns if col != 'Unique ID']]
+
     return df
 

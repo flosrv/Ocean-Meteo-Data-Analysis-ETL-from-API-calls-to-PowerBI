@@ -14,15 +14,15 @@ import time
 import tkinter as tk
 from urllib.parse import quote_plus, unquote
 import xml.etree.ElementTree as ET
-from sqlmodel import SQLModel, Field, create_engine, Relationship, Session
 from typing import Optional, List
 from pandas import json_normalize
 import numpy as np
-from folium import CircleMarker
 import geopandas as gpd
 from shapely.geometry import Point
 from IPython.core.display import *
-import json
-from sqlalchemy import create_engine, Integer, String, Float, DateTime, Column, MetaData
 from sqlalchemy.orm import sessionmaker, declarative_base
-from sqlalchemy import UniqueConstraint  # Importation de UniqueConstraint
+from sqlalchemy import UniqueConstraint 
+from sqlalchemy.exc import IntegrityError
+import json
+from sqlalchemy import create_engine, inspect, Table, Column, Integer, String, Float, DateTime, ForeignKey, MetaData, text
+import logging
