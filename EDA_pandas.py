@@ -95,6 +95,7 @@ def pca_plot(df):
     sns.scatterplot(x=pca_components[:, 0], y=pca_components[:, 1])
 
 # - Clustering (K-Means ou autres):
+# exemple d'utilité : 
 def kmeans_clustering(df, x_col, y_col, n_clusters=3):
     features = df.select_dtypes(include=['float64', 'int64'])
     kmeans = KMeans(n_clusters=n_clusters)

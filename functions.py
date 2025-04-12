@@ -739,11 +739,10 @@ def calculate_closer_probabilities(df, columns):
     
     return probabilities
 
-def add_hour_day_period_and_month(df, datetime_column='Datetime'):
+def add_day_period(df, datetime_column='Datetime'):
     """
-    Cette fonction ajoute trois colonnes :
-    - 'Day Period' : Moment de la journée ('Morning', 'Afternoon', 'Evening', 'Night')
-    - 'Month' : Le mois basé sur la colonne 'Datetime'
+    Cette fonction ajoute deux colonnes :
+    - 'DayPeriod' : Moment de la journée ('Morning', 'Afternoon', 'Evening', 'Night')
     - 'Hour' : L'heure extraite de la colonne 'Datetime'
     
     Parameters:
@@ -757,9 +756,8 @@ def add_hour_day_period_and_month(df, datetime_column='Datetime'):
     # Assurez-vous que la colonne 'Datetime' est bien de type datetime
     df[datetime_column] = pd.to_datetime(df[datetime_column], errors='coerce')
     
-    # Vérifier si la colonne 'Day Period' existe déjà, sinon l'ajouter
+    # Ajouter la colonne 'DayPeriod' (Moment de la journée)
     if 'DayPeriod' not in df.columns:
-        # Ajouter la colonne 'Day Period' (Moment de la journée)
         def get_day_period(hour):
             if 6 <= hour < 12:
                 return 'Morning'
@@ -771,16 +769,9 @@ def add_hour_day_period_and_month(df, datetime_column='Datetime'):
                 return 'Night'
         
         df['DayPeriod'] = df[datetime_column].dt.hour.apply(get_day_period)
-    
-    # Vérifier si la colonne 'Month' existe déjà, sinon l'ajouter
-    if 'Month' not in df.columns:
-        df['Month'] = df[datetime_column].dt.month
-    
-    # Vérifier si la colonne 'Hour' existe déjà, sinon l'ajouter
-    if 'Hour' not in df.columns:
-        df['Hour'] = df[datetime_column].dt.hour
-    
+      
     return df
+
 
 def create_table_in_mysql(df: pd.DataFrame, table_name: str, engine):
     # Vérifier si la table existe déjà
