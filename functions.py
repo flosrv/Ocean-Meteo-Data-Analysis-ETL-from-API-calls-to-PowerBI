@@ -802,25 +802,45 @@ def create_unique_id(df, columns):
 
     return df
 
-def display_row_values(df, columns=None):
+def display_row_values(df, columns=None, show_index=True):
     # Si aucune colonne n'est spécifiée, afficher toutes les colonnes
     if columns is None:
         columns = df.columns.tolist()
 
     if isinstance(columns, str):
         columns = [columns]
+
+    # Préparer les données de l'index
+    if show_index:
+        index_values = df.index.astype(str)
+        index_name = df.index.name or 'Index'
+        index_width = max(index_values.map(len).max(), len(index_name))
+    else:
+        index_values = None
+        index_width = 0
+
     # Calculer la largeur maximale pour chaque colonne spécifiée
-    column_widths = [max(df[col].astype(str).apply(len).max(), len(col)) for col in columns]
+    column_widths = [max(df[col].astype(str).map(len).max(), len(col)) for col in columns]
 
-    # Afficher les noms des colonnes, en tenant compte des largeurs maximales
-    column_headers = [col.ljust(column_widths[i]) for i, col in enumerate(columns)]
-    print("  |  ".join(column_headers))
-    print("-" * (sum(column_widths) + (len(columns) - 1) * 4))  # Ligne de séparation
+    # Préparer l'en-tête
+    headers = []
+    if show_index:
+        headers.append(index_name.ljust(index_width))
+    headers += [col.ljust(column_widths[i]) for i, col in enumerate(columns)]
+    print("  |  ".join(headers))
 
-    # Afficher les 10 premières valeurs sous chaque colonne spécifiée, alignées
-    for i in range(min(10, len(df))):  # Affiche jusqu'à 10 lignes ou le nombre de lignes disponibles
-        row_values = [str(df.iloc[i, df.columns.get_loc(col)]).ljust(column_widths[j]) for j, col in enumerate(columns)]
-        print("  |  ".join(row_values))
+    # Ligne de séparation
+    total_width = index_width + sum(column_widths) + (len(columns) + (1 if show_index else 0) - 1) * 4
+    print("-" * total_width)
+
+    # Afficher jusqu'à 10 lignes
+    for i in range(min(10, len(df))):
+        row = []
+        if show_index:
+            row.append(str(index_values[i]).ljust(index_width))
+        row += [str(df.iloc[i, df.columns.get_loc(col)]).ljust(column_widths[j]) for j, col in enumerate(columns)]
+        print("  |  ".join(row))
+
 
 def check_table_exists(table_name: str, engine) -> bool:
     # Requête SQL pour vérifier si la table existe
@@ -960,6 +980,34 @@ def insert_new_rows(df: pd.DataFrame, engine, table_name: str, ref: str):
             print("✅ Insertion terminée avec succès.")
         else:
             print("⚠️ Aucune nouvelle ligne à insérer. Toutes les références sont déjà présentes.")
+
+def get_table_data_to_df(table_name: str, engine) -> pd.DataFrame:
+    # Récupère toutes les métadonnées (tables, colonnes, etc.) de la base via l'engine
+    metadata = MetaData()
+    metadata.reflect(bind=engine)
+
+    # Récupère un objet Table correspondant au nom de la table spécifié
+    target_table = metadata.tables[table_name]
+
+    # Ouvre une connexion à la base de données
+    with engine.connect() as connection:
+        # Crée une requête SQLAlchemy pour récupérer toutes les lignes de la table
+        stmt = select(target_table)
+
+        # Exécute la requête
+        result = connection.execute(stmt)
+
+        # Récupère les données sous forme de DataFrame
+        df = pd.DataFrame(result.fetchall())
+
+        # Récupère les noms de colonnes de la table
+        df.columns = result.keys()
+
+    return df
+
+
+
+
 
 
 

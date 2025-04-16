@@ -4,12 +4,10 @@ from sqlalchemy import create_engine, Table
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.future import select
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from api.main_db import engine, metadata_silver
+from database import engine, metadata
+from api.routes import router 
 from contextlib import asynccontextmanager
-
-# Définir la base pour déclarer les modèles (tables)
-Base = declarative_base()
+from api.models import NumericColumns
 
 # Créer une application FastAPI
 app = FastAPI()
@@ -20,9 +18,9 @@ tables_silver = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Connexion à la base de données
-    metadata_silver.reflect(bind=engine)
+    metadata.reflect(bind=engine)
     # Charger les tables du schéma "Silver" dans un dictionnaire
-    app.state.tables = {table.name: table for table in metadata_silver.sorted_tables}
+    app.state.tables = {table.name: table for table in metadata.sorted_tables}
     yield
     # Fermeture de la connexion à la base de données
     app.state.tables = None
@@ -30,7 +28,9 @@ async def lifespan(app: FastAPI):
 # Création de l'application FastAPI avec le lifespan
 app = FastAPI(lifespan=lifespan)
 
-@app.on_event("startup")
+app.include_router(router)
+
+@app.get("startup")
 async def startup():
     # Cette fonction sera exécutée lors du démarrage de l'API
     # Vous pouvez accéder à app.state.tables après le démarrage
