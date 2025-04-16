@@ -69,72 +69,6 @@ def fetch_table_data(engine, table_name: str) -> pd.DataFrame:
         print(f"❌ Erreur lors de la récupération de '{table_name}' : {e}")
         return pd.DataFrame()  # Retourne une DataFrame vide en cas d'erreur
 
-def create_table_in_mysql(df: pd.DataFrame, table_name: str, engine):
-    # Vérifier si la table existe déjà
-    check_table_sql = f"SHOW TABLES LIKE '{table_name}';"
-
-    try:
-        with engine.connect() as connection:
-            result = connection.execute(text(check_table_sql))
-            if result.fetchone():
-                print(f"⚠️ La table '{table_name}' existe déjà dans MySQL.")
-            else:
-                # Définition des colonnes
-                column_definitions = []
-                for column_name, dtype in df.dtypes.items():
-                    if dtype == 'object': 
-                        column_type = "VARCHAR(255)"
-                    elif dtype == 'int64':  
-                        column_type = "INT"
-                    elif dtype == 'float64': 
-                        column_type = "FLOAT"
-                    elif dtype == 'datetime64[ns]': 
-                        column_type = "DATETIME"
-                    elif dtype == 'datetime64[ns, UTC]': 
-                        column_type = "DATETIME"
-                    elif dtype == 'timedelta64[ns]':  
-                        column_type = "TIME"
-                    elif dtype == 'bool':  
-                        column_type = "BOOLEAN"
-                    elif dtype == 'time64[ns]': 
-                        column_type = "TIME"
-                    else:
-                        column_type = "VARCHAR(255)" 
-
-                    column_definitions.append(f"`{column_name}` {column_type}")
-
-                # Création de la table
-                create_table_sql = f"CREATE TABLE `{table_name}` ({', '.join(column_definitions)});"
-                connection.execute(text(create_table_sql))
-                print(f"✅ Table '{table_name}' créée avec succès dans MySQL.")
-            
-            # Charger les données sans doublons
-            # Vérifier les doublons
-            for index, row in df.iterrows():
-                # Créer une requête d'insertion
-                insert_sql = f"INSERT INTO `{table_name}` ({', '.join(df.columns)}) VALUES ({', '.join(['%s'] * len(df.columns))});"
-
-                # Vérifier si la ligne existe déjà dans la table
-                check_duplicate_sql = f"SELECT COUNT(*) FROM `{table_name}` WHERE "
-                check_duplicate_conditions = []
-                for column in df.columns:
-                    check_duplicate_conditions.append(f"`{column}` = %s")
-                check_duplicate_sql += " AND ".join(check_duplicate_conditions)
-
-                # Exécuter la vérification des doublons
-                duplicate_check_result = connection.execute(text(check_duplicate_sql), tuple(row))
-                duplicate_count = duplicate_check_result.fetchone()[0]
-
-                # Si la ligne n'existe pas déjà, l'insérer
-                if duplicate_count == 0:
-                    connection.execute(text(insert_sql), tuple(row))
-                    print(f"✅ Ligne insérée dans la table '{table_name}'.")
-                else:
-                    print(f"⚠️ Doublon détecté pour la ligne : {row}. Aucune insertion effectuée.")
-
-    except Exception as e:
-        print(f"❌ Erreur lors de la création de la table : {e}")
-
 def insert_new_rows(engine, df: pd.DataFrame, table_name: str):
     """
     Insère uniquement les nouvelles lignes de df dans MySQL en comparant la colonne 'Datetime'.
@@ -772,49 +706,6 @@ def add_day_period(df, datetime_column='Datetime'):
       
     return df
 
-
-def create_table_in_mysql(df: pd.DataFrame, table_name: str, engine):
-    # Vérifier si la table existe déjà
-    check_table_sql = f"SHOW TABLES LIKE '{table_name}';"
-
-    try:
-        with engine.connect() as connection:
-            result = connection.execute(text(check_table_sql))
-            if result.fetchone():
-                print(f"⚠️ La table '{table_name}' existe déjà dans MySQL.")
-            else:
-                # Définition des colonnes
-                column_definitions = []
-                for column_name, dtype in df.dtypes.items():
-                    if dtype == 'object': 
-                        column_type = "VARCHAR(255)"
-                    elif dtype == 'int64':  
-                        column_type = "INT"
-                    elif dtype == 'float64': 
-                        column_type = "FLOAT"
-                    elif dtype == 'datetime64[ns]': 
-                        column_type = "DATETIME"
-                    elif dtype == 'datetime64[ns, UTC]': 
-                        column_type = "DATETIME"
-                    elif dtype == 'timedelta64[ns]':  
-                        column_type = "TIME"
-                    elif dtype == 'bool':  
-                        column_type = "BOOLEAN"
-                    elif dtype == 'time64[ns]': 
-                        column_type = "TIME"
-                    else:
-                        column_type = "VARCHAR(255)" 
-
-                    column_definitions.append(f"`{column_name}` {column_type}")
-
-                # Création de la table
-                create_table_sql = f"CREATE TABLE `{table_name}` ({', '.join(column_definitions)});"
-                connection.execute(text(create_table_sql))
-                print(f"✅ Table '{table_name}' créée avec succès dans MySQL.")
-                
-    except Exception as e:
-        print(f"❌ Erreur lors de la création de la table : {e}")
-
 def afficher_info_bouees_aleatoires(buoy_datas, prefix=None, df_wanted=None):
     """
     Affiche les informations de DataFrames (marine et/ou météo) de deux bouées choisies aléatoirement.
@@ -871,66 +762,6 @@ def display_buoys_missing_df_counts(buoy_datas, prefix=None, df_wanted=None):
     if df_wanted is None or df_wanted.lower() == "meteo":
         print(f"\n☁️ Nombre de bouées sans données '{meteo_key}' : {meteo_empty}/{total}")
 
-def insert_new_rows(df: pd.DataFrame, engine, table: str, ref_column: str):
-    """
-    Insère les nouvelles lignes dans la table MySQL après avoir vérifié si les IDs uniques existent déjà.
-
-    Args:
-    - df (pd.DataFrame): Le DataFrame contenant les nouvelles données.
-    - engine (SQLAlchemy Engine): L'engine SQLAlchemy pour se connecter à la base de données.
-    - table (str): Le nom de la table dans laquelle insérer les données.
-    - ref_column (str): Le nom de la colonne à utiliser comme référence (ID unique).
-    """
-    try:
-        print("🔍 Connexion à la base de données en cours...")
-
-        with engine.connect() as connection:
-            # Vérifier si la table est vide
-            print("🧮 Vérification si la table est vide...")
-            check_empty_sql = f"SELECT COUNT(*) FROM `{table}`"
-            result = connection.execute(text(check_empty_sql))
-            row_count = result.fetchone()[0]
-
-            if row_count == 0:
-                # La table est vide, insérer toutes les données avec compteur
-                print("⚡ La table est vide. Insertion de toutes les données avec suivi...")
-                total = len(df)
-                inserted = 0
-                for _, row in df.iterrows():
-                    row_df = pd.DataFrame([row])
-                    row_df.to_sql(table, con=engine, if_exists='append', index=False)
-                    inserted += 1
-                    sys.stdout.write(f"\r⏳ Insertion en cours : {inserted}/{total}")
-                    sys.stdout.flush()
-                print("\n✅ Toutes les lignes ont été insérées dans la table.")
-            else:
-                # Sinon, récupérer les IDs existants dans la table
-                print(f"🔎 Récupération des {ref_column} existants dans la table...")
-                check_existing_ids_sql = f"SELECT `{ref_column}` FROM `{table}`"
-                result = connection.execute(text(check_existing_ids_sql))
-                existing_ids = {row[0] for row in result.fetchall()}
-                print(f"🧑‍💻 {len(existing_ids)} {ref_column} existants ont été trouvés dans la table.")
-
-                # Filtrage des lignes du DataFrame
-                print("🔄 Filtrage des nouvelles lignes à insérer...")
-                new_rows_df = df[~df[ref_column].isin(existing_ids)]
-
-                if not new_rows_df.empty:
-                    total = len(new_rows_df)
-                    print(f"🚀 Insertion de {total} nouvelles lignes...")
-                    inserted = 0
-                    for _, row in new_rows_df.iterrows():
-                        row_df = pd.DataFrame([row])
-                        row_df.to_sql(table, con=engine, if_exists='append', index=False)
-                        inserted += 1
-                        sys.stdout.write(f"\r⏳ Insertion en cours : {inserted}/{total}")
-                        sys.stdout.flush()
-                    print("\n✅ Insertion terminée avec succès.")
-                else:
-                    print(f"⚠️ Aucune nouvelle ligne à insérer, tous les {ref_column} sont déjà présents.")
-    except Exception as e:
-        print(f"❌ Erreur lors de l'insertion dans la table '{table}': {e}")
-        
 def create_unique_id(df, columns):
 
     """
@@ -990,3 +821,145 @@ def display_row_values(df, columns=None):
     for i in range(min(10, len(df))):  # Affiche jusqu'à 10 lignes ou le nombre de lignes disponibles
         row_values = [str(df.iloc[i, df.columns.get_loc(col)]).ljust(column_widths[j]) for j, col in enumerate(columns)]
         print("  |  ".join(row_values))
+
+def check_table_exists(table_name: str, engine) -> bool:
+    # Requête SQL pour vérifier si la table existe
+    query = f"SHOW TABLES LIKE '{table_name}'"
+    
+    with engine.connect() as connection:
+        # Exécuter la requête
+        result = connection.execute(text(query)).fetchall()
+    
+    # Si la table existe, renvoyer True
+    return bool(result)
+
+def create_table_in_mysql(df: pd.DataFrame, table_name: str, engine):
+    """
+    Crée une table MySQL en se basant sur la structure du DataFrame, 
+    en utilisant uniquement SQLAlchemy (sans requête SQL brute).
+    """
+
+    # Vérifie si la table existe déjà
+    if check_table_exists(table_name=table_name, engine=engine):
+        print(f"⚠️ La table '{table_name}' existe déjà.")
+        return
+
+    metadata = MetaData()
+    columns = []
+
+    # Gestion de l'index comme colonne primaire si nécessaire
+    if df.index.name is not None or not df.index.equals(pd.RangeIndex(start=0, stop=len(df))):
+        index_name = df.index.name or "index"
+        index_dtype = df.index.dtype
+
+        if index_dtype == 'object':
+            col_type = String(255)
+        elif index_dtype == 'int64':
+            col_type = Integer
+        elif index_dtype == 'float64':
+            col_type = Float
+        elif np.issubdtype(index_dtype, np.datetime64):
+            col_type = DateTime
+        else:
+            col_type = String(255)
+
+        columns.append(Column(index_name, col_type, primary_key=True))
+
+    # Ajouter les colonnes du DataFrame
+    for column_name, dtype in df.dtypes.items():
+        if dtype == 'object':
+            col_type = String(255)
+        elif dtype == 'int64':
+            col_type = Integer
+        elif dtype == 'float64':
+            col_type = Float
+        elif np.issubdtype(dtype, np.datetime64):
+            col_type = DateTime
+        elif dtype == 'timedelta64[ns]':
+            col_type = Time
+        elif dtype == 'bool':
+            col_type = Boolean
+        else:
+            col_type = String(255)
+
+        columns.append(Column(column_name, col_type))
+
+    # Création de la table
+    table = Table(table_name, metadata, *columns)
+    metadata.create_all(engine)
+
+    print(f"✅ Table '{table_name}' créée avec succès via SQLAlchemy.")
+
+def insert_new_rows(df: pd.DataFrame, engine, table_name: str, ref: str):
+    """
+    Insère les nouvelles lignes dans la table MySQL après avoir vérifié si les IDs uniques existent déjà.
+    Utilise uniquement SQLAlchemy, sans requête SQL brute.
+    """
+
+    # Initialise un objet MetaData pour introspecter la base
+    metadata = MetaData()
+
+    # Récupère toutes les métadonnées (tables, colonnes, etc.) de la base via l'engine
+    metadata.reflect(bind=engine)
+
+    # Récupère un objet Table correspondant au nom de la table spécifié
+    print(f"📋 Récupération de la table '{table_name}' dans la base de données...")
+    target_table = metadata.tables[table_name]
+
+    # Ouvre une connexion à la base de données
+    with engine.connect() as connection:
+
+        # Si la référence est l'index du DataFrame
+        if ref == "index":
+            print("🔎 Vérification des valeurs uniques de l'index...")
+
+            # Récupère le nom de l'index, ou "index" par défaut
+            index_name = df.index.name or "index"
+
+            # Crée une requête SQLAlchemy pour sélectionner toutes les valeurs de l'index dans la table
+            stmt = select(target_table.c[index_name])
+
+            # Exécute la requête
+            result = connection.execute(stmt)
+
+            # Extrait les résultats sous forme d'ensemble pour une recherche rapide
+            existing_refs = {row[0] for row in result}
+
+            # Garde uniquement les lignes dont l'index n'existe pas encore dans la table
+            print(f"✅ {len(existing_refs)} références existantes trouvées.")
+            new_df = df[~df.index.isin(existing_refs)]
+        
+        else:
+            print(f"🔎 Vérification des valeurs uniques de la colonne '{ref}'...")
+
+            # Crée une requête pour sélectionner toutes les valeurs de la colonne de référence
+            stmt = select(target_table.c[ref])
+
+            # Exécute la requête
+            result = connection.execute(stmt)
+
+            # Extrait les résultats existants
+            existing_refs = {row[0] for row in result}
+
+            # Filtre les lignes du DataFrame dont la valeur de référence n'existe pas encore
+            print(f"✅ {len(existing_refs)} références existantes trouvées.")
+            new_df = df[~df[ref].isin(existing_refs)]
+
+        # Vérifie s'il y a des lignes à insérer
+        if not new_df.empty:
+            print(f"🚀 Insertion de {len(new_df)} nouvelles lignes...")
+            # Insère les nouvelles lignes dans la table par lots de 1000
+            new_df.to_sql(
+                name=table_name,             # nom de la table
+                con=engine,             # moteur de connexion
+                if_exists='append',     # ajoute sans écraser
+                index=(ref == "index"), # inclure l'index comme colonne si demandé
+                index_label=df.index.name if ref == "index" else None,  # nom de la colonne d'index
+                chunksize=1000          # insertion par batchs de 1000 lignes
+            )
+            print("✅ Insertion terminée avec succès.")
+        else:
+            print("⚠️ Aucune nouvelle ligne à insérer. Toutes les références sont déjà présentes.")
+
+
+
