@@ -69,38 +69,6 @@ def fetch_table_data(engine, table_name: str) -> pd.DataFrame:
         print(f"❌ Erreur lors de la récupération de '{table_name}' : {e}")
         return pd.DataFrame()  # Retourne une DataFrame vide en cas d'erreur
 
-def insert_new_rows(engine, df: pd.DataFrame, table_name: str):
-    """
-    Insère uniquement les nouvelles lignes de df dans MySQL en comparant la colonne 'Datetime'.
-    """
-    try:
-        # Vérifier si la table existe et récupérer la valeur max de Datetime
-        query = f"SELECT MAX(Datetime) FROM `{table_name}`;"
-        with engine.connect() as connection:
-            result = connection.execute(text(query)).scalar()  # Récupérer la valeur max
-        
-        # Si la table est vide, insérer tout le DataFrame
-        if result is None:
-            print(f"💾 Aucune donnée dans '{table_name}', insertion de toutes les lignes.")
-            df.to_sql(name=table_name, con=engine, if_exists='append', index=False)
-            print(f"✅ {len(df)} nouvelles lignes insérées dans '{table_name}'.")
-            return
-        
-        # Filtrer les nouvelles lignes (celles avec un Datetime plus grand que la valeur max en base)
-        df["Datetime"] = pd.to_datetime(df["Datetime"])  # S'assurer que la colonne est bien en datetime
-        new_rows = df[df["Datetime"] > result]
-
-        if new_rows.empty:
-            print(f"✅ Aucune nouvelle ligne à insérer dans '{table_name}'.")
-            return
-
-        # Insérer uniquement les nouvelles lignes
-        new_rows.to_sql(name=table_name, con=engine, if_exists='append', index=False)
-        print(f"✅ {len(new_rows)} nouvelles lignes insérées dans '{table_name}'.")
-
-    except Exception as e:
-        print(f"❌ Erreur lors de l'insertion des nouvelles lignes : {e}")
-
 def show_null_counts(df):
     row_count = df.shape[0]
     null_counts = df.isnull().sum()
@@ -841,7 +809,6 @@ def display_row_values(df, columns=None, show_index=True):
         row += [str(df.iloc[i, df.columns.get_loc(col)]).ljust(column_widths[j]) for j, col in enumerate(columns)]
         print("  |  ".join(row))
 
-
 def check_table_exists(table_name: str, engine) -> bool:
     # Requête SQL pour vérifier si la table existe
     query = f"SHOW TABLES LIKE '{table_name}'"
@@ -910,16 +877,20 @@ def create_table_in_mysql(df: pd.DataFrame, table_name: str, engine):
 
     print(f"✅ Table '{table_name}' créée avec succès via SQLAlchemy.")
 
-def insert_new_rows(df: pd.DataFrame, engine, table_name: str, ref: str):
+import pandas as pd
+from sqlalchemy import MetaData, select
+
+def insert_new_rows(df: pd.DataFrame, engine, table_name: str):
     """
-    Insère les nouvelles lignes dans la table MySQL après avoir vérifié si les IDs uniques existent déjà.
+    Insère les nouvelles lignes dans une table MySQL tout en évitant les doublons,
+    en se basant uniquement sur l'index du DataFrame et la clé primaire de la table SQL.
     Utilise uniquement SQLAlchemy, sans requête SQL brute.
     """
 
     # Initialise un objet MetaData pour introspecter la base
     metadata = MetaData()
 
-    # Récupère toutes les métadonnées (tables, colonnes, etc.) de la base via l'engine
+    # Récupère toutes les métadonnées (tables, colonnes, clés primaires, etc.) via l'engine
     metadata.reflect(bind=engine)
 
     # Récupère un objet Table correspondant au nom de la table spécifié
@@ -929,57 +900,49 @@ def insert_new_rows(df: pd.DataFrame, engine, table_name: str, ref: str):
     # Ouvre une connexion à la base de données
     with engine.connect() as connection:
 
-        # Si la référence est l'index du DataFrame
-        if ref == "index":
-            print("🔎 Vérification des valeurs uniques de l'index...")
+        # Récupère la ou les colonnes constituant la clé primaire de la table
+        pk_columns = list(target_table.primary_key.columns)
 
-            # Récupère le nom de l'index, ou "index" par défaut
-            index_name = df.index.name or "index"
+        # Vérifie que la table a bien une seule clé primaire (pour la simplicité du traitement ici)
+        if len(pk_columns) != 1:
+            raise ValueError("La table doit avoir exactement une clé primaire pour cette fonction.")
 
-            # Crée une requête SQLAlchemy pour sélectionner toutes les valeurs de l'index dans la table
-            stmt = select(target_table.c[index_name])
+        # Nom de la colonne correspondant à la clé primaire
+        pk_column = pk_columns[0].name
 
-            # Exécute la requête
-            result = connection.execute(stmt)
+        print(f"🔎 Clé primaire détectée : '{pk_column}'. Comparaison avec l'index du DataFrame...")
 
-            # Extrait les résultats sous forme d'ensemble pour une recherche rapide
-            existing_refs = {row[0] for row in result}
+        # Crée une requête SQLAlchemy pour récupérer les valeurs déjà existantes de la clé primaire
+        stmt = select(target_table.c[pk_column])
 
-            # Garde uniquement les lignes dont l'index n'existe pas encore dans la table
-            print(f"✅ {len(existing_refs)} références existantes trouvées.")
-            new_df = df[~df.index.isin(existing_refs)]
-        
-        else:
-            print(f"🔎 Vérification des valeurs uniques de la colonne '{ref}'...")
+        # Exécute la requête
+        result = connection.execute(stmt)
 
-            # Crée une requête pour sélectionner toutes les valeurs de la colonne de référence
-            stmt = select(target_table.c[ref])
+        # Extrait les résultats existants sous forme d'ensemble pour recherche rapide
+        existing_refs = {row[0] for row in result}
 
-            # Exécute la requête
-            result = connection.execute(stmt)
+        print(f"✅ {len(existing_refs)} références existantes trouvées dans la table.")
 
-            # Extrait les résultats existants
-            existing_refs = {row[0] for row in result}
-
-            # Filtre les lignes du DataFrame dont la valeur de référence n'existe pas encore
-            print(f"✅ {len(existing_refs)} références existantes trouvées.")
-            new_df = df[~df[ref].isin(existing_refs)]
+        # Garde uniquement les lignes du DataFrame dont l'index n'est pas déjà présent dans la table
+        new_df = df[~df.index.isin(existing_refs)]
 
         # Vérifie s'il y a des lignes à insérer
         if not new_df.empty:
-            print(f"🚀 Insertion de {len(new_df)} nouvelles lignes...")
-            # Insère les nouvelles lignes dans la table par lots de 1000
+            print(f"🚀 Insertion de {len(new_df)} nouvelles lignes dans '{table_name}'...")
+
+            # Insère les nouvelles lignes par batchs de 1000, en incluant l'index comme colonne (clé primaire)
             new_df.to_sql(
                 name=table_name,             # nom de la table
-                con=engine,             # moteur de connexion
-                if_exists='append',     # ajoute sans écraser
-                index=(ref == "index"), # inclure l'index comme colonne si demandé
-                index_label=df.index.name if ref == "index" else None,  # nom de la colonne d'index
-                chunksize=1000          # insertion par batchs de 1000 lignes
+                con=engine,                  # moteur de connexion SQLAlchemy
+                if_exists='append',          # ajoute sans écraser la table
+                index=True,                  # inclut l'index du DataFrame
+                index_label=pk_column,       # nom de la colonne d'index (clé primaire)
+                chunksize=1000               # insertion par batchs
             )
             print("✅ Insertion terminée avec succès.")
         else:
-            print("⚠️ Aucune nouvelle ligne à insérer. Toutes les références sont déjà présentes.")
+            print("⚠️ Aucune nouvelle ligne à insérer. Toutes les clés primaires sont déjà présentes.")
+
 
 def get_table_data_to_df(table_name: str, engine) -> pd.DataFrame:
     # Récupère toutes les métadonnées (tables, colonnes, etc.) de la base via l'engine

@@ -1,6 +1,6 @@
 from fastapi import FastAPI, APIRouter, Depends, Query, Path, HTTPException
-from database import engine, table_dim_station, table_dim_time
-from database import  table_silver
+from api.database_api import engine, table_dim_station, table_dim_time
+from api.database_api import  table_silver
 from typing import List, Dict, Any, Annotated
 from typing import List, Optional,Union,Dict, Any, Annotated
 from api.models import NumericColumns
@@ -106,10 +106,7 @@ async def get_mode_meteo_data(
             "modes": dict(zip([col.value for col in columns], modes))
         }
 
-
-
 # GET STANDARD DEVIATION of one or several numeric columns
-
 @router.get("/silver/std_dev")
 async def get_std_dev_meteo_data(
     columns: Annotated[List[NumericColumns], Query(...)]
@@ -215,7 +212,6 @@ async def get_histogram_meteo_data(
         }
 
 # GET LINEAR REGRESSION model for one numeric column
-
 @router.get("/silver/linear_regression/{column: NumericColumns}")
 async def get_linear_regression_meteo_data(
     column: NumericColumns
@@ -238,7 +234,6 @@ async def get_linear_regression_meteo_data(
         }
 
 # GET K-MEANS clustering for one numeric column
-
 @router.get("/silver/kmeans/{column: NumericColumns}")
 async def get_kmeans_meteo_data(
     column: NumericColumns
@@ -253,3 +248,16 @@ async def get_kmeans_meteo_data(
             "column": column.value,
             "clusters": clusters["clusters"]
         }
+    
+
+
+
+
+
+
+
+
+
+
+
+

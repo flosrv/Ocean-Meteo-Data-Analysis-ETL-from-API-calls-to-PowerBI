@@ -4,10 +4,9 @@ from sqlalchemy import create_engine, Table
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.future import select
-from database import engine, metadata
+from api.database_api import engine, metadata
 from api.routes import router 
 from contextlib import asynccontextmanager
-from api.models import NumericColumns
 
 # Créer une application FastAPI
 app = FastAPI()
