@@ -877,73 +877,6 @@ def create_table_in_mysql(df: pd.DataFrame, table_name: str, engine):
 
     print(f"✅ Table '{table_name}' créée avec succès via SQLAlchemy.")
 
-import pandas as pd
-from sqlalchemy import MetaData, select
-
-def insert_new_rows(df: pd.DataFrame, engine, table_name: str):
-    """
-    Insère les nouvelles lignes dans une table MySQL tout en évitant les doublons,
-    en se basant uniquement sur l'index du DataFrame et la clé primaire de la table SQL.
-    Utilise uniquement SQLAlchemy, sans requête SQL brute.
-    """
-
-    # Initialise un objet MetaData pour introspecter la base
-    metadata = MetaData()
-
-    # Récupère toutes les métadonnées (tables, colonnes, clés primaires, etc.) via l'engine
-    metadata.reflect(bind=engine)
-
-    # Récupère un objet Table correspondant au nom de la table spécifié
-    print(f"📋 Récupération de la table '{table_name}' dans la base de données...")
-    target_table = metadata.tables[table_name]
-
-    # Ouvre une connexion à la base de données
-    with engine.connect() as connection:
-
-        # Récupère la ou les colonnes constituant la clé primaire de la table
-        pk_columns = list(target_table.primary_key.columns)
-
-        # Vérifie que la table a bien une seule clé primaire (pour la simplicité du traitement ici)
-        if len(pk_columns) != 1:
-            raise ValueError("La table doit avoir exactement une clé primaire pour cette fonction.")
-
-        # Nom de la colonne correspondant à la clé primaire
-        pk_column = pk_columns[0].name
-
-        print(f"🔎 Clé primaire détectée : '{pk_column}'. Comparaison avec l'index du DataFrame...")
-
-        # Crée une requête SQLAlchemy pour récupérer les valeurs déjà existantes de la clé primaire
-        stmt = select(target_table.c[pk_column])
-
-        # Exécute la requête
-        result = connection.execute(stmt)
-
-        # Extrait les résultats existants sous forme d'ensemble pour recherche rapide
-        existing_refs = {row[0] for row in result}
-
-        print(f"✅ {len(existing_refs)} références existantes trouvées dans la table.")
-
-        # Garde uniquement les lignes du DataFrame dont l'index n'est pas déjà présent dans la table
-        new_df = df[~df.index.isin(existing_refs)]
-
-        # Vérifie s'il y a des lignes à insérer
-        if not new_df.empty:
-            print(f"🚀 Insertion de {len(new_df)} nouvelles lignes dans '{table_name}'...")
-
-            # Insère les nouvelles lignes par batchs de 1000, en incluant l'index comme colonne (clé primaire)
-            new_df.to_sql(
-                name=table_name,             # nom de la table
-                con=engine,                  # moteur de connexion SQLAlchemy
-                if_exists='append',          # ajoute sans écraser la table
-                index=True,                  # inclut l'index du DataFrame
-                index_label=pk_column,       # nom de la colonne d'index (clé primaire)
-                chunksize=1000               # insertion par batchs
-            )
-            print("✅ Insertion terminée avec succès.")
-        else:
-            print("⚠️ Aucune nouvelle ligne à insérer. Toutes les clés primaires sont déjà présentes.")
-
-
 def get_table_data_to_df(table_name: str, engine) -> pd.DataFrame:
     # Récupère toutes les métadonnées (tables, colonnes, etc.) de la base via l'engine
     metadata = MetaData()
@@ -968,7 +901,86 @@ def get_table_data_to_df(table_name: str, engine) -> pd.DataFrame:
 
     return df
 
+def insert_new_rows(df: pd.DataFrame, engine, table_name: str, ref: str):
+    """
+    Insère uniquement les nouvelles lignes dans une table MySQL existante
+    en comparant une colonne de référence dans le DataFrame avec la même colonne dans la table.
+    """
+    
+    # Récupérer les métadonnées des tables existantes
+    metadata = MetaData()
+    metadata.reflect(bind=engine)
 
+    # Vérifier que la table existe dans la base
+    if table_name not in metadata.tables:
+        raise ValueError(f"La table '{table_name}' n'existe pas dans la base de données.")
+    
+    # Accéder à la table
+    table = metadata.tables[table_name]
+    
+    # Vérifier si la colonne de référence existe dans la table
+    if ref not in table.columns:
+        raise ValueError(f"La colonne de référence '{ref}' n'existe pas dans la table.")
+    
+    # Récupérer toutes les valeurs de la colonne de référence déjà présentes dans la base
+    with engine.connect() as conn:
+        stmt = select(table.c[ref])  # Sélectionner la colonne de référence
+        existing_values = {row[0] for row in conn.execute(stmt)}  # Ensemble des valeurs existantes
+
+    print(f"🔎 {len(existing_values)} valeurs déjà présentes dans la colonne '{ref}'.")
+
+    # Garder uniquement les lignes où la valeur de `ref` n'est pas déjà dans la table
+    new_df = df[~df[ref].isin(existing_values)]
+
+    # Si aucune nouvelle ligne à insérer
+    if new_df.empty:
+        print("⚠️ Aucune nouvelle ligne à insérer.")
+        return
+
+    print(f"🚀 Insertion de {len(new_df)} lignes dans '{table_name}'...")
+
+    # Insertion des nouvelles lignes dans la base de données
+    new_df.to_sql(
+        name=table_name,            # Nom de la table cible
+        con=engine,                 # Connexion SQLAlchemy
+        if_exists='append',         # Ajouter sans supprimer les données existantes
+        index=False,                # Ne pas utiliser l'index comme colonne
+        chunksize=1000              # Insertion par lots de 1000 lignes
+    )
+
+    print("✅ Insertion terminée avec succès.")
+
+
+def save_concat_csv(df, base_filename, csv_folder="csv"):
+    """
+    Sauvegarde un dataframe sous forme de fichier CSV dans un dossier, en concaténant les fichiers existants
+    avec le même nom de base si nécessaire.
+    
+    Args:
+    - df_final (pd.DataFrame): Le dataframe à sauvegarder.
+    - csv_folder (str): Le dossier où les fichiers CSV sont stockés.
+    - base_filename (str): La racine du nom du fichier à utiliser.
+    """
+    
+    # Création du nom du fichier avec la date actuelle
+    current_datetime = datetime.now().strftime('%Y-%m-%d_%Hh%M')
+    df_final_csv_name = f"{csv_folder}/{base_filename}_{current_datetime}.csv"
+    
+    # Vérifier si des fichiers avec le même nom de base existent déjà dans le dossier
+    existing_files = [f for f in os.listdir(csv_folder) if f.startswith(base_filename) and f.endswith('.csv')]
+    
+    if existing_files:
+        # Si des fichiers existent déjà, on les charge et les concatène avec df_final
+        df_existing = pd.concat([pd.read_csv(os.path.join(csv_folder, file)) for file in existing_files], ignore_index=True)
+        
+        # Concaténer le nouveau dataframe avec les anciens
+        df_final_combined = pd.concat([df_existing, df], ignore_index=True)
+        
+        # Sauvegarder le fichier concaténé
+        df_final_combined.to_csv(df_final_csv_name, index=False)
+    else:
+        # Si aucun fichier n'existe, on sauvegarde simplement le dataframe final
+        df.to_csv(df_final_csv_name, index=False)
 
 
 
