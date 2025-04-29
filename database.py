@@ -1,10 +1,7 @@
-from sqlmodel import SQLModel, Field, create_engine, Session
-from typing import Optional
-from datetime import datetime
-import json
+from imports import *
 
 # ==============================
-# Charger les informations de connexion
+# Connexion
 # ==============================
 creds_path: str = r"c:\Credentials\mysql_creds.json"
 with open(creds_path, 'r') as file:
@@ -14,88 +11,103 @@ with open(creds_path, 'r') as file:
     host = content["host"]
     port = content["port"]
 
-# ==============================
-# Nom de la base de données
-# ==============================
+db_staging = 'db_staging'
 db_DW = 'oceanography_data_analysis'
 
-# ==============================
-# Création de l'engine pour se connecter à la base de données existante
-# ==============================
-engine_DW = create_engine(f"mysql://{mysql_user}:{password}@{host}/{db_DW}", echo=True)
+table_staging_marine_name = "cleaned_marine_data"
+table_staging_meteo_name = "cleaned_meteo_data"
+
+table_facts_marine_name = "facts_ocean"
+table_facts_meteo_name = "facts_meteo"
+
+table_dim_station_name = "dim_station"
+table_dim_time_name = "dim_time"
+
+# Test de la connexion pour le data warehouse
+try:
+    engine_DW = create_engine(f"mysql://{mysql_user}:{password}@{host}/{db_DW}")
+    with engine_DW.connect() as connection:
+        print("Connexion réussie à la base de données DW!")
+except Exception as e:
+    print(f"Erreur de connexion à la base de données DW: {e}")
+
+# Test de la connexion pour la staging DB
+try:
+    engine_staging = create_engine(f"mysql://{mysql_user}:{password}@{host}/{db_staging}")
+    with engine_staging.connect() as connection:
+        print("Connexion réussie à la base de données Staging!")
+except Exception as e:
+    print(f"Erreur de connexion à la base de données Staging: {e}")
+
+
+SessionLocalStaging = sessionmaker(bind=engine_staging)
+
+def get_db_staging():
+    db = SessionLocalStaging()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# Définition des tables
+metadata = MetaData()
 
 # ==============================
-# Modèles de données pour SQLModel
+# Table: cleaned_marine_data
 # ==============================
+cleaned_marine_data = Table(
+    'cleaned_marine_data', metadata,
+    Column('Datetime', DateTime, nullable=True, primary_key=True),
+    Column('Lat', String(255), nullable=True),
+    Column('Lon', String(255), nullable=True),
+    Column('Wave Height (m)', Float, nullable=True),
+    Column('Average Wave Period (s)', Float, nullable=True),
+    Column('Dominant Wave Direction (°)', Float, nullable=True),
+    Column('Water T° (°C)', Float, nullable=True),
+    Column('Water Depth (m)', Float, nullable=True),
+    Column('Station ID', String(255), nullable=True),
+    Column('Station Zone', String(255), nullable=True),
+    Column('Sea Temperature Depth (m)', String(255), nullable=True),
+    Column('Barometer Elevation (m)', String(255), nullable=True),
+    Column('Sea Level Pressure (hPa)', Float, nullable=True),
+    Column('Year', String(255), nullable=True),
+    Column('Month', String(255), nullable=True),
+    Column('Day', String(255), nullable=True),
+    Column('Hour', String(255), nullable=True),
+    Column('DayOfWeek', String(255), nullable=True),
+    Column('DayPeriod', String(255), nullable=True)
+)
 
-# Modèle pour DimStation
-class DimStation(SQLModel, table=True):
-    __tablename__ = 'dim_station'
-    
-    index: int = Field(primary_key=True)
-    station_id: Optional[str] = Field(default=None, alias="Station ID")
-    station_zone: Optional[str] = Field(default=None, alias="Station Zone")
-    lat: Optional[str] = Field(default=None, alias="Lat")
-    lon: Optional[str] = Field(default=None, alias="Lon")
 
-    class Config:
-        orm_mode = True  # Permet d'utiliser avec Pydantic
-
-# Modèle pour DimTime
-class DimTime(SQLModel, table=True):
-    __tablename__ = 'dim_time'
-    
-    index: int = Field(primary_key=True)
-    datetime_value: Optional[datetime] = Field(default=None, alias="Datetime")  # Renommé en datetime_value
-    year: Optional[str] = Field(default=None, alias="Year")
-    month: Optional[str] = Field(default=None, alias="Month")
-    day_of_week: Optional[str] = Field(default=None, alias="DayOfWeek")
-    day: Optional[str] = Field(default=None, alias="Day")
-    hour: Optional[str] = Field(default=None, alias="Hour")
-    day_period: Optional[str] = Field(default=None, alias="DayPeriod")
-
-    class Config:
-        orm_mode = True
-
-# Modèle pour FactsMeteo
-class FactsMeteo(SQLModel, table=True):
-    __tablename__ = 'facts_meteo'
-    
-    unique_id: Optional[str] = Field(default=None, alias="Unique ID")
-    temperature_c: Optional[float] = Field(default=None, alias="T°(C°)")
-    humidity: Optional[float] = Field(default=None, alias="Relative Humidity (%)")
-    dew_point: Optional[float] = Field(default=None, alias="Dew Point (°C)")
-    precipitations: Optional[float] = Field(default=None, alias="Precipitations (mm)")
-    pressure: Optional[float] = Field(default=None, alias="Sea Level Pressure (hPa)")
-    low_clouds: Optional[float] = Field(default=None, alias="Low Clouds (%)")
-    middle_clouds: Optional[float] = Field(default=None, alias="Middle Clouds (%)")
-    high_clouds: Optional[float] = Field(default=None, alias="High Clouds (%)")
-    cloud_cover: Optional[float] = Field(default=None, alias="Cloud Cover (%)")
-    visibility: Optional[float] = Field(default=None, alias="Visibility (km)")
-    wind_speed: Optional[float] = Field(default=None, alias="Wind Speed (10m)")
-    wind_dir: Optional[float] = Field(default=None, alias="Wind Direction (°)")
-    wind_gusts: Optional[float] = Field(default=None, alias="Wind Gusts (km/h)")
-    baro_elevation: Optional[str] = Field(default=None, alias="Barometer Elevation (m)")
-    air_temp_height: Optional[str] = Field(default=None, alias="Air T° Height (m)")
-    station_id: Optional[str] = Field(default=None, alias="Station ID")
-    datetime_value: Optional[datetime] = Field(default=None, alias="Datetime")  # Renommé ici aussi
-
-    class Config:
-        orm_mode = True
-
-# Modèle pour FactsOcean
-class FactsOcean(SQLModel, table=True):
-    __tablename__ = 'facts_ocean'
-    
-    unique_id: Optional[str] = Field(default=None, alias="Unique ID")
-    wave_height: Optional[float] = Field(default=None, alias="Wave Height (m)")
-    wave_period: Optional[float] = Field(default=None, alias="Average Wave Period (s)")
-    wave_direction: Optional[float] = Field(default=None, alias="Dominant Wave Direction (°)")
-    water_temp: Optional[float] = Field(default=None, alias="Water T° (°C)")
-    water_depth: Optional[float] = Field(default=None, alias="Water Depth (m)")
-    sea_temp_depth: Optional[str] = Field(default=None, alias="Sea Temperature Depth (m)")
-    station_id: Optional[str] = Field(default=None, alias="Station ID")
-    datetime_value: Optional[datetime] = Field(default=None, alias="Datetime")  # Renommé ici aussi
-
-    class Config:
-        orm_mode = True
+# ==============================
+# Table: cleaned_meteo_data
+# ==============================
+cleaned_meteo_data = Table(
+    'cleaned_meteo_data', metadata,
+    Column('Datetime', DateTime, nullable=True, primary_key=True),
+    Column('Lat', String(255), nullable=True),
+    Column('Lon', String(255), nullable=True),
+    Column('Wind Direction (°)', Float, nullable=True),
+    Column('Wind Gusts (km/h)', Float, nullable=True),
+    Column('Station ID', String(255), nullable=True),
+    Column('Station Zone', String(255), nullable=True),
+    Column('Sea Temperature Depth (m)', String(255), nullable=True),
+    Column('Barometer Elevation (m)', String(255), nullable=True),
+    Column('Air T° Height (m)', String(255), nullable=True),
+    Column('T°(C°)', Float, nullable=True),
+    Column('Relative Humidity (%)', Float, nullable=True),
+    Column('Dew Point (°C)', Float, nullable=True),
+    Column('Precipitations (mm)', Float, nullable=True),
+    Column('Cloud Cover (%)', Float, nullable=True),
+    Column('Low Clouds (%)', Float, nullable=True),
+    Column('Middle Clouds (%)', Float, nullable=True),
+    Column('High Clouds (%)', Float, nullable=True),
+    Column('Visibility (km)', Float, nullable=True),
+    Column('Wind Speed (10m)', Float, nullable=True),
+    Column('Year', String(255), nullable=True),
+    Column('Month', String(255), nullable=True),
+    Column('Day', String(255), nullable=True),
+    Column('Hour', String(255), nullable=True),
+    Column('DayOfWeek', String(255), nullable=True),
+    Column('DayPeriod', String(255), nullable=True)
+)

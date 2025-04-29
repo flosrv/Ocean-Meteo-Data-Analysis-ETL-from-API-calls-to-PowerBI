@@ -1,57 +1,73 @@
 from fastapi import FastAPI
-from imports import *
-from database import *
-from functions import *
-from api.routes import router  # Assurez-vous que le routeur est correctement importé
-from api.sql_models import DimStation, DimTime, FactsMeteo, FactsOcean  # Importer les modèles SQLModel
+from contextlib import asynccontextmanager
+from api.routers import marine, meteo
+from database import engine_staging, cleaned_marine_data, cleaned_meteo_data
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy import inspect
 
-# Créer une application FastAPI
-app = FastAPI()
-
-# Variable pour stocker les tables du schéma
-tables = {}
-
+# =============================
+# LIFESPAN CONTEXT
+# =============================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Contexte de vie pour l'application FastAPI.
-    Cette fonction est utilisée pour la gestion de la connexion à la base de données.
+    Initialise les tables et la connexion à la base de données pendant le cycle de vie de l'application.
     """
-    # Connexion à la base de données
-    metadata.reflect(bind=engine_DW)
+    # Création de la session pour interagir avec la DB (Database Session)
+    SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine_staging)
+    app.state.db = SessionLocal()
 
-    # Charger les tables associées aux modèles SQLModel (par exemple, DimStation, DimTime, etc.)
+    # Vérification de la disponibilité des tables
+    inspector = inspect(engine_staging)
+    tables = inspector.get_table_names()
+
+    # Mise à disposition des tables pour l'application
     app.state.tables = {
-        'dim_station': DimStation,
-        'dim_time': DimTime,
-        'facts_meteo': FactsMeteo,
-        'facts_ocean': FactsOcean,
+        'cleaned_marine_data': cleaned_marine_data,
+        'cleaned_meteo_data': cleaned_meteo_data,
     }
-    
-    # Laisser l'application tourner pendant le cycle de vie
-    yield
-    
-    # Fermeture de la connexion à la base de données après que l'application a cessé de fonctionner
-    app.state.tables = None
+    app.state.tables_available = {table: table in tables for table in app.state.tables}
 
-# Création de l'application FastAPI avec le lifespan
+    # Point de reprise de l'application
+    yield
+
+    # Fermeture de la session à la fin
+    app.state.db.close()
+    app.state.tables = None
+    app.state.tables_available = None
+
+
+# =============================
+# APP FASTAPI
+# =============================
 app = FastAPI(lifespan=lifespan)
 
-# Inclusion des routes dans l'application
-app.include_router(router)
+# =============================
+# ROUTERS
+# =============================
+app.include_router(marine.router, prefix="/marine", tags=["Marine Data"])
+app.include_router(meteo.router, prefix="/meteo", tags=["Meteo Data"])
 
+# =============================
+# ROUTES DE TEST
+# =============================
 @app.get("/startup")
 async def startup():
     """
-    Cette fonction permet de tester l'accès aux tables et vérifie que l'application a bien chargé les tables au démarrage.
+    Vérifie que l'application a bien démarré et que les tables sont disponibles.
     """
-    return {"message": "API démarrée avec succès", "tables": list(app.state.tables.keys())}
+    return {
+        "message": "API démarrée avec succès",
+        "tables": list(app.state.tables.keys()),
+        "tables_available": app.state.tables_available
+    }
 
-# Exemple d'endpoint pour tester l'accès aux tables
 @app.get("/tables")
 async def get_tables():
     """
-    Cette route renvoie la liste des noms des tables associées aux modèles SQLModel.
-    Elle permet de vérifier que l'application a bien chargé les tables.
+    Renvoie la liste des tables disponibles dans l'application.
     """
-    return {"tables": list(app.state.tables.keys())}
+    return {
+        "tables": list(app.state.tables.keys()),
+        "tables_available": app.state.tables_available
+    }

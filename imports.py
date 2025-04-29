@@ -1,4 +1,6 @@
-import re, os, sys, subprocess, random, warnings, time, json, logging, ast, glob
+import os, sys
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+import re, subprocess, random, warnings, time, json, logging, ast, glob
 import requests, pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, timezone, time
@@ -16,7 +18,7 @@ from retry_requests import retry
 import requests_cache
 
 import xml.etree.ElementTree as ET
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from bs4 import BeautifulSoup
 import geopandas as gpd
 from shapely.geometry import Point
@@ -27,11 +29,15 @@ api = NdbcApi()
 
 from siphon.simplewebservice.ndbc import NDBC
 
-from sqlalchemy import create_engine, inspect, MetaData, Table, select, Boolean
+from sqlalchemy import create_engine, inspect, MetaData, Table, select, Boolean,func
 from sqlalchemy import Column, Integer, String, Time, Float, DateTime, ForeignKey, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import ForeignKeyConstraint, UniqueConstraint
+from sqlalchemy.orm import Session
+from enum import Enum
+
+from sqlalchemy.orm import Session, sessionmaker
 from contextlib import asynccontextmanager
 from sqlmodel import SQLModel, Field
 from sklearn.pipeline import Pipeline
@@ -54,10 +60,6 @@ from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from selenium.webdriver.support import expected_conditions as EC
 
-from api.routes import router 
-from fastapi import FastAPI, APIRouter, Depends, Query, Path, HTTPException
 from typing import List, Optional,Union,Dict, Any, Annotated
-from api.sql_models import NumericColumns, DimStation, DimTime, FactsMeteo, FactsOcean, engine_DW
-from sqlalchemy import select, func, MetaData
+from sqlalchemy import select, func, MetaData, asc, and_
 from pydantic import BaseModel, Field
-from sqlmodel import Session
