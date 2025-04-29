@@ -1,4 +1,7 @@
 from imports import *
+from functions import *
+
+
 
 # Charger les informations de connexion MySQL
 path_to_mysql_creds = r"c:\Credentials\mysql_creds.json"

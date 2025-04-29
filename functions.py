@@ -820,62 +820,6 @@ def check_table_exists(table_name: str, engine) -> bool:
     # Si la table existe, renvoyer True
     return bool(result)
 
-def create_table_in_mysql(df: pd.DataFrame, table_name: str, engine):
-    """
-    Crée une table MySQL en se basant sur la structure du DataFrame, 
-    en utilisant uniquement SQLAlchemy (sans requête SQL brute).
-    """
-
-    # Vérifie si la table existe déjà
-    if check_table_exists(table_name=table_name, engine=engine):
-        print(f"⚠️ La table '{table_name}' existe déjà.")
-        return
-
-    metadata = MetaData()
-    columns = []
-
-    # Gestion de l'index comme colonne primaire si nécessaire
-    if df.index.name is not None or not df.index.equals(pd.RangeIndex(start=0, stop=len(df))):
-        index_name = df.index.name or "index"
-        index_dtype = df.index.dtype
-
-        if index_dtype == 'object':
-            col_type = String(255)
-        elif index_dtype == 'int64':
-            col_type = Integer
-        elif index_dtype == 'float64':
-            col_type = Float
-        elif np.issubdtype(index_dtype, np.datetime64):
-            col_type = DateTime
-        else:
-            col_type = String(255)
-
-        columns.append(Column(index_name, col_type, primary_key=True))
-
-    # Ajouter les colonnes du DataFrame
-    for column_name, dtype in df.dtypes.items():
-        if dtype == 'object':
-            col_type = String(255)
-        elif dtype == 'int64':
-            col_type = Integer
-        elif dtype == 'float64':
-            col_type = Float
-        elif np.issubdtype(dtype, np.datetime64):
-            col_type = DateTime
-        elif dtype == 'timedelta64[ns]':
-            col_type = Time
-        elif dtype == 'bool':
-            col_type = Boolean
-        else:
-            col_type = String(255)
-
-        columns.append(Column(column_name, col_type))
-
-    # Création de la table
-    table = Table(table_name, metadata, *columns)
-    metadata.create_all(engine)
-
-    print(f"✅ Table '{table_name}' créée avec succès via SQLAlchemy.")
 
 def get_table_data_to_df(table_name: str, engine) -> pd.DataFrame:
     # Récupère toutes les métadonnées (tables, colonnes, etc.) de la base via l'engine
@@ -901,6 +845,229 @@ def get_table_data_to_df(table_name: str, engine) -> pd.DataFrame:
 
     return df
 
+def save_concat_csv(df, base_filename, csv_folder="csv"):
+    """
+    Sauvegarde un dataframe sous forme de fichier CSV dans un dossier, en concaténant les fichiers existants
+    avec le même nom de base si nécessaire.
+    
+    Args:
+    - df_final (pd.DataFrame): Le dataframe à sauvegarder.
+    - csv_folder (str): Le dossier où les fichiers CSV sont stockés.
+    - base_filename (str): La racine du nom du fichier à utiliser.
+    """
+    
+    # Création du nom du fichier avec la date actuelle
+    current_datetime = datetime.now().strftime('%Y-%m-%d_%Hh%M')
+    df_final_csv_name = f"{csv_folder}/{base_filename}_{current_datetime}.csv"
+    
+    # Vérifier si des fichiers avec le même nom de base existent déjà dans le dossier
+    existing_files = [f for f in os.listdir(csv_folder) if f.startswith(base_filename) and f.endswith('.csv')]
+    
+    if existing_files:
+        # Si des fichiers existent déjà, on les charge et les concatène avec df_final
+        df_existing = pd.concat([pd.read_csv(os.path.join(csv_folder, file)) for file in existing_files], ignore_index=True)
+        
+        # Concaténer le nouveau dataframe avec les anciens
+        df_final_combined = pd.concat([df_existing, df], ignore_index=True)
+        
+        # Sauvegarder le fichier concaténé
+        df_final_combined.to_csv(df_final_csv_name, index=False)
+    else:
+        # Si aucun fichier n'existe, on sauvegarde simplement le dataframe final
+        df.to_csv(df_final_csv_name, index=False)
+
+def create_driver(website_url):
+    
+
+    # Liste d'user-agents (exemples courants)
+    user_agents = [
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.1 Safari/605.1.15",
+        "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+    ]
+    chosen_agent = random.choice(user_agents)
+
+    # Initialisation des options pour le driver
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument(f"user-agent={chosen_agent}")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+
+    driver = webdriver.Chrome(options=options)
+    driver.implicitly_wait(2)
+
+    driver.get(website_url)
+
+    # Scroll jusqu’en bas de la page
+    last_height = driver.execute_script("return document.body.scrollHeight")
+    while True:
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)
+        new_height = driver.execute_script("return document.body.scrollHeight")
+        if new_height == last_height:
+            break
+        last_height = new_height
+
+    # Revenir en haut
+    driver.execute_script("window.scrollTo(0, 0);")
+
+    return driver
+# import By, EC et nosucelement
+
+def find_element(driver, criteria, element):
+    try:
+        criteria = criteria.strip().lower()
+        wait = WebDriverWait(driver, 10)
+        
+        by_map = {
+            'id': By.ID,
+            'name': By.NAME,
+            'xpath': By.XPATH,
+            'css': By.CSS_SELECTOR,
+            'class': By.CLASS_NAME,
+            'tag': By.TAG_NAME,
+            'link': By.LINK_TEXT,
+            'partial_link': By.PARTIAL_LINK_TEXT
+        }
+
+        if criteria not in by_map:
+            raise ValueError(f"[find_element] Critère non reconnu : '{criteria}'")
+        element = wait.until(EC.presence_of_element_located((by_map[criteria], element)))
+        return element
+    
+    except NoSuchElementException as e:
+        print(f"Erreur : {e}")
+    except Exception as e:
+        print(str(e))
+
+
+def wait_page_to_load(driver):
+    WebDriverWait(driver, 10).until(
+        lambda d: d.execute_script('return document.readyState') == 'complete'
+    )
+    print("Page completely loaded!")
+
+def convert_to_decimal(lat, lon):
+    # Convertir latitude
+    lat_deg = float(lat[:-1])  # Retirer le dernier caractère (N/S)
+    lat_dir = lat[-1]  # Direction (N/S)
+    if lat_dir == "S":
+        lat_deg = -lat_deg
+    
+    # Convertir longitude
+    lon_deg = float(lon[:-1])  # Retirer le dernier caractère (E/W)
+    lon_dir = lon[-1]  # Direction (E/W)
+    if lon_dir == "W":
+        lon_deg = -lon_deg
+    
+    return lat_deg, lon_deg
+
+def create_mysql_engine(db_name: str, creds_path: str = r"c:\Credentials\mysql_creds.json"):
+    # Charger les informations de connexion
+    with open(creds_path, 'r') as file:
+        content = json.load(file)
+        mysql_user = content["user"]
+        password = content["password"]
+        host = content["host"]
+        port = content["port"]
+    
+    # Créer l'engine
+    engine = create_engine(
+        f"mysql+mysqlconnector://{mysql_user}:{password}@{host}:{port}/{db_name}",
+        isolation_level='AUTOCOMMIT'
+    )
+    
+    return engine
+
+def check_existing_csv_files(csv_folder, base_filename):
+    # Lister tous les fichiers dans le dossier csv
+    existing_files = os.listdir(csv_folder)
+    
+    # Filtrer ceux qui commencent par le nom de base
+    matching_files = [f for f in existing_files if f.startswith(base_filename) and f.endswith('.csv')]
+    
+    return matching_files
+
+def create_table_in_mysql(df: pd.DataFrame, table_name: str, engine):
+    """
+    Crée une table MySQL en se basant sur la structure du DataFrame, 
+    en utilisant uniquement SQLAlchemy (sans requête SQL brute).
+    """
+
+    print("🔄 Vérification de l'existence de la table...")
+
+    # Vérifie si la table existe déjà
+    if check_table_exists(table_name=table_name, engine=engine):
+        print(f"⚠️ La table '{table_name}' existe déjà.")
+        return
+
+    print("✅ La table n'existe pas. Création de la table en cours...")
+
+    metadata = MetaData()
+    columns = []
+
+    # Gestion de l'index comme colonne primaire si nécessaire
+    if df.index.name is not None or not df.index.equals(pd.RangeIndex(start=0, stop=len(df))):
+        index_name = df.index.name or "index"
+        index_dtype = df.index.dtype
+
+        print(f"🔑 Ajout de la colonne d'index '{index_name}' comme clé primaire...")
+
+        if index_dtype == 'object':
+            col_type = String(255)
+            icon = "🔤"  # String type
+        elif index_dtype == 'int64':
+            col_type = Integer
+            icon = "🔢"  # Integer type
+        elif index_dtype in ['float32', 'float64']:  # Gérer float32 et float64
+            col_type = Float
+            icon = "🔢"  # Float type
+        elif np.issubdtype(index_dtype, np.datetime64):
+            col_type = DateTime
+            icon = "📅"  # DateTime type
+        else:
+            col_type = String(255)
+            icon = "🔤"  # String type
+
+        columns.append(Column(index_name, col_type, primary_key=True))
+        print(f"{icon} Colonne '{index_name}' ajoutée en tant que '{col_type}' (clé primaire)")
+
+    # Ajouter les colonnes du DataFrame
+    print("\n🔄 Ajout des colonnes du DataFrame...")
+    for column_name, dtype in df.dtypes.items():
+        if dtype == 'object':
+            col_type = String(255)
+            icon = "🔤"  # String type
+        elif dtype == 'int64':
+            col_type = Integer
+            icon = "🔢"  # Integer type
+        elif dtype in ['float32', 'float64']:  # Gérer float32 et float64
+            col_type = Float
+            icon = "🔢"  # Float type
+        elif np.issubdtype(dtype, np.datetime64):
+            col_type = DateTime
+            icon = "📅"  # DateTime type
+        elif dtype == 'timedelta64[ns]':
+            col_type = Time
+            icon = "🕒"  # Timedelta type
+        elif dtype == 'bool':
+            col_type = Boolean
+            icon = "❓"  # Boolean type (point d'interrogation)
+        else:
+            col_type = String(255)
+            icon = "🔤"  # String type
+
+        columns.append(Column(column_name, col_type))
+        print(f"{icon} Colonne '{column_name}' ajoutée en tant que '{col_type}'")
+
+    # Création de la table
+    print("\n🚀 Création de la table dans la base de données...")
+    table = Table(table_name, metadata, *columns)
+    metadata.create_all(engine)
+
+    print(f"\n✅ Table '{table_name}' créée avec succès dans la base de données MySQL.")
+    
 def insert_new_rows(df: pd.DataFrame, engine, table_name: str, ref: str):
     """
     Insère uniquement les nouvelles lignes dans une table MySQL existante
@@ -949,40 +1116,6 @@ def insert_new_rows(df: pd.DataFrame, engine, table_name: str, ref: str):
     )
 
     print("✅ Insertion terminée avec succès.")
-
-
-def save_concat_csv(df, base_filename, csv_folder="csv"):
-    """
-    Sauvegarde un dataframe sous forme de fichier CSV dans un dossier, en concaténant les fichiers existants
-    avec le même nom de base si nécessaire.
-    
-    Args:
-    - df_final (pd.DataFrame): Le dataframe à sauvegarder.
-    - csv_folder (str): Le dossier où les fichiers CSV sont stockés.
-    - base_filename (str): La racine du nom du fichier à utiliser.
-    """
-    
-    # Création du nom du fichier avec la date actuelle
-    current_datetime = datetime.now().strftime('%Y-%m-%d_%Hh%M')
-    df_final_csv_name = f"{csv_folder}/{base_filename}_{current_datetime}.csv"
-    
-    # Vérifier si des fichiers avec le même nom de base existent déjà dans le dossier
-    existing_files = [f for f in os.listdir(csv_folder) if f.startswith(base_filename) and f.endswith('.csv')]
-    
-    if existing_files:
-        # Si des fichiers existent déjà, on les charge et les concatène avec df_final
-        df_existing = pd.concat([pd.read_csv(os.path.join(csv_folder, file)) for file in existing_files], ignore_index=True)
-        
-        # Concaténer le nouveau dataframe avec les anciens
-        df_final_combined = pd.concat([df_existing, df], ignore_index=True)
-        
-        # Sauvegarder le fichier concaténé
-        df_final_combined.to_csv(df_final_csv_name, index=False)
-    else:
-        # Si aucun fichier n'existe, on sauvegarde simplement le dataframe final
-        df.to_csv(df_final_csv_name, index=False)
-
-
 
 
 

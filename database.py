@@ -1,21 +1,11 @@
-from imports import *
+from functions import *
 
-# Charger les informations de connexion MySQL
-path_to_mysql_creds = r"c:\Credentials\mysql_creds.json"
-with open(path_to_mysql_creds, 'r') as file:
-    content = json.load(file)
-    mysql_user = content["user"]
-    password = content["password"]
-    host = content["host"]
-    port = content["port"]
-    database = "oceanography_data_analysis"
-    
+table_dim_station = "dim_station"
+table_dim_time = "dim_time"
+table_facts_meteo = "facts_meteo"
+table_facts_ocean = "facts_ocean"
+db_staging = 'db_staging'
+db_DW ='oceanography_data_analysis'
 
-metadata = MetaData()
-# Connexion à MySQL avec SQLModel
-engine = create_engine(f"mysql+mysqlconnector://{mysql_user}:{password}@{host}:{port}/{database}", isolation_level='AUTOCOMMIT')
-Session = sessionmaker(bind=engine)
-session = Session()
-
-
-
+engine_staging = create_mysql_engine(db_name=db_staging)
+engine_DW = create_mysql_engine(db_name=db_DW)
