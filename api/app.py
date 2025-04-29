@@ -1,12 +1,4 @@
-import json
-from fastapi import FastAPI
-from sqlalchemy import create_engine, Table
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.future import select
-from api.database_api import engine, metadata
-from api.routes import router 
-from contextlib import asynccontextmanager
+from imports import *
 
 # Créer une application FastAPI
 app = FastAPI()

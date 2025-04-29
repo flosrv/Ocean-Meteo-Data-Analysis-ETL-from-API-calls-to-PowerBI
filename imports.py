@@ -55,3 +55,12 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from selenium.webdriver.support import expected_conditions as EC
+import json
+from fastapi import FastAPI
+from sqlalchemy import create_engine, Table
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.future import select
+from api.database_api import engine, metadata
+from api.routes import router 
+from contextlib import asynccontextmanager
