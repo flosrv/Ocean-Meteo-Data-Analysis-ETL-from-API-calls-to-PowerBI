@@ -820,7 +820,6 @@ def check_table_exists(table_name: str, engine) -> bool:
     # Si la table existe, renvoyer True
     return bool(result)
 
-
 def get_table_data_to_df(table_name: str, engine) -> pd.DataFrame:
     # Récupère toutes les métadonnées (tables, colonnes, etc.) de la base via l'engine
     metadata = MetaData()
@@ -913,7 +912,6 @@ def create_driver(website_url):
     driver.execute_script("window.scrollTo(0, 0);")
 
     return driver
-# import By, EC et nosucelement
 
 def find_element(driver, criteria, element):
     try:
@@ -941,7 +939,6 @@ def find_element(driver, criteria, element):
     except Exception as e:
         print(str(e))
 
-
 def wait_page_to_load(driver):
     WebDriverWait(driver, 10).until(
         lambda d: d.execute_script('return document.readyState') == 'complete'
@@ -963,7 +960,8 @@ def convert_to_decimal(lat, lon):
     
     return lat_deg, lon_deg
 
-def create_mysql_engine(db_name: str, creds_path: str = r"c:\Credentials\mysql_creds.json"):
+def create_mysql_engine(db_name: str):
+    creds_path: str = r"c:\Credentials\mysql_creds.json"
     # Charger les informations de connexion
     with open(creds_path, 'r') as file:
         content = json.load(file)
@@ -1069,53 +1067,38 @@ def create_table_in_mysql(df: pd.DataFrame, table_name: str, engine):
     print(f"\n✅ Table '{table_name}' créée avec succès dans la base de données MySQL.")
     
 def insert_new_rows(df: pd.DataFrame, engine, table_name: str, ref: str):
-    """
-    Insère uniquement les nouvelles lignes dans une table MySQL existante
-    en comparant une colonne de référence dans le DataFrame avec la même colonne dans la table.
-    """
-    
-    # Récupérer les métadonnées des tables existantes
     metadata = MetaData()
-    metadata.reflect(bind=engine)
-
-    # Vérifier que la table existe dans la base
-    if table_name not in metadata.tables:
-        raise ValueError(f"La table '{table_name}' n'existe pas dans la base de données.")
     
-    # Accéder à la table
-    table = metadata.tables[table_name]
-    
-    # Vérifier si la colonne de référence existe dans la table
-    if ref not in table.columns:
-        raise ValueError(f"La colonne de référence '{ref}' n'existe pas dans la table.")
-    
-    # Récupérer toutes les valeurs de la colonne de référence déjà présentes dans la base
-    with engine.connect() as conn:
-        stmt = select(table.c[ref])  # Sélectionner la colonne de référence
-        existing_values = {row[0] for row in conn.execute(stmt)}  # Ensemble des valeurs existantes
+    try:
+        # Chargement direct de la table depuis la base
+        table = Table(table_name, metadata, autoload_with=engine)
 
-    print(f"🔎 {len(existing_values)} valeurs déjà présentes dans la colonne '{ref}'.")
+        if ref not in table.columns:
+            raise ValueError(f"La colonne de référence '{ref}' n'existe pas dans la table.")
 
-    # Garder uniquement les lignes où la valeur de `ref` n'est pas déjà dans la table
-    new_df = df[~df[ref].isin(existing_values)]
+        with engine.connect() as conn:
+            stmt = select(table.c[ref])
+            existing_values = {row[0] for row in conn.execute(stmt)}
 
-    # Si aucune nouvelle ligne à insérer
-    if new_df.empty:
-        print("⚠️ Aucune nouvelle ligne à insérer.")
-        return
+        print(f"🔎 {len(existing_values)} valeurs déjà présentes dans la colonne '{ref}'.")
 
-    print(f"🚀 Insertion de {len(new_df)} lignes dans '{table_name}'...")
+        new_df = df[~df[ref].isin(existing_values)]
 
-    # Insertion des nouvelles lignes dans la base de données
-    new_df.to_sql(
-        name=table_name,            # Nom de la table cible
-        con=engine,                 # Connexion SQLAlchemy
-        if_exists='append',         # Ajouter sans supprimer les données existantes
-        index=False,                # Ne pas utiliser l'index comme colonne
-        chunksize=1000              # Insertion par lots de 1000 lignes
-    )
+        if new_df.empty:
+            print("⚠️ Aucune nouvelle ligne à insérer.")
+            return
 
-    print("✅ Insertion terminée avec succès.")
+        print(f"🚀 Insertion de {len(new_df)} lignes dans '{table_name}'...")
 
+        new_df.to_sql(name=table_name, con=engine, if_exists='append', index=False, chunksize=1000)
 
+        print("✅ Insertion terminée avec succès.")
+
+    except Exception as e:
+        print(f"💥 Erreur pendant l'insertion : {e}")
+
+def find_column(table, column_name):
+    if column_name in table.c:
+        return table.c.get(column_name, None)
+    return
 

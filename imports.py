@@ -3,7 +3,6 @@ import requests, pandas as pd
 import numpy as np
 from datetime import datetime, timedelta, timezone, time
 from pathlib import Path
-from typing import Optional, List
 from functools import reduce
 from operator import mul
 from itertools import product
@@ -28,14 +27,13 @@ api = NdbcApi()
 
 from siphon.simplewebservice.ndbc import NDBC
 
-from sqlalchemy import create_engine, inspect, MetaData, Table, select, Boolean, Column, Integer, String, Time, Float, DateTime, ForeignKey, MetaData, text
+from sqlalchemy import create_engine, inspect, MetaData, Table, select, Boolean
+from sqlalchemy import Column, Integer, String, Time, Float, DateTime, ForeignKey, text
 from sqlalchemy.orm import sessionmaker, declarative_base
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import ForeignKeyConstraint, UniqueConstraint
 from contextlib import asynccontextmanager
-import json
-
-
+from sqlmodel import SQLModel, Field
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
@@ -55,12 +53,11 @@ from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
 from selenium.common.exceptions import NoSuchElementException, TimeoutException
 from selenium.webdriver.support import expected_conditions as EC
-import json
-from fastapi import FastAPI
-from sqlalchemy import create_engine, Table
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.future import select
-from api.database_api import engine, metadata
+
 from api.routes import router 
-from contextlib import asynccontextmanager
+from fastapi import FastAPI, APIRouter, Depends, Query, Path, HTTPException
+from typing import List, Optional,Union,Dict, Any, Annotated
+from api.sql_models import NumericColumns, DimStation, DimTime, FactsMeteo, FactsOcean, engine_DW
+from sqlalchemy import select, func, MetaData
+from pydantic import BaseModel, Field
+from sqlmodel import Session

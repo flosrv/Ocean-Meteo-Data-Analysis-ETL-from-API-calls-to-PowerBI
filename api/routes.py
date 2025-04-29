@@ -1,263 +1,219 @@
-from fastapi import FastAPI, APIRouter, Depends, Query, Path, HTTPException
-from api.database_api import engine, table_dim_station, table_dim_time
-from api.database_api import  table_silver
-from typing import List, Dict, Any, Annotated
-from typing import List, Optional,Union,Dict, Any, Annotated
-from api.models import NumericColumns
-from sqlalchemy import select, func 
-from datetime import datetime
+from imports import *
 
 
-app = FastAPI()
 router = APIRouter()
 
-@router.get("/")
-async def get_items():
-    return {"message": "Staging API for Ocean ETL Data Analysis 1.0.0"}
+def get_session():
+    # Crée une session pour interagir avec la base de données
+    with Session(engine_DW) as session:
+        yield session
 
+# ==============================
+# Routes pour DimStation
+# ==============================
 
-@router.get("/silver/{station_id: Optional[int] = None}/{time_id: Optional[int] = None}")
-async def get_silver_data(
-    list_columns: List[str] = Query(...), 
-    station_id: Optional[int] = None, 
-                          time_id: Optional[int] = None):
-    query = f"SELECT * FROM {table_silver}"
-    if not list_columns and not station_id and not time_id:
-        raise ValueError("At least one column or station_id and time_id must be provided.")
-    if station_id:
-        query += f" WHERE Station ID = {station_id}"
-    if time_id:
-        query += f" AND Datetime = {time_id}"
-    if list_columns:
-        query += f" AND ({','.join(list_columns)})"
-    
-    result = await engine.execute(query).fetchall()
-    return result
-
-################# DATA MANIPULATION METHODS ##########################################################################################
-
-# GET X COLUMN MEDIAN ON Datetime Range between  two dates. api propose a dropdown containing the numeric values
-@router.get("/silver/median/{column}/date_range/{start_date}/{end_date}")
-async def get_median_meteo_data(
-    column: NumericColumns,
-    start_date: str = Path(..., description="Start date in YYYY-MM-DD format"),
-    end_date: str = Path(..., description="End date in YYYY-MM-DD format")
+@router.get("/station/{station_id}")
+async def get_station_data(
+    station_id: str,
+    session: Session = Depends(get_session)
 ):
-    try:
-        start = datetime.strptime(start_date, "%Y-%m-%d")
-        end = datetime.strptime(end_date, "%Y-%m-%d")
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid date format. Use YYYY-MM-DD")
+    """
+    Cette route permet de récupérer les données d'une station donnée.
+    L'ID de la station est utilisé pour effectuer la recherche.
+    """
+    # Recherche des données de la station dans la base de données
+    station_data = session.exec(select(DimStation).where(DimStation.station_id == station_id)).first()
 
-    async with engine.connect() as conn:
-        stmt = select(func.percentile_cont(0.5).within_group(getattr(table_silver.c, column.value))).where(
-            table_silver.c.Datetime.between(start, end)
-        )
-        result = await conn.execute(stmt)
-        median = result.scalar()
+    # Si aucune donnée n'est trouvée pour cette station, on renvoie une erreur 404
+    if not station_data:
+        raise HTTPException(status_code=404, detail="Station not found")
+    
+    # Retourne les données de la station
+    return station_data
 
-    if median is None:
-        raise HTTPException(status_code=404, detail="No data found for the given range and column.")
+# ==============================
+# Routes pour DimTime
+# ==============================
 
+@router.get("/time/{datetime_value}")
+async def get_time_data(
+    datetime_value: datetime,
+    session: Session = Depends(get_session)
+):
+    """
+    Cette route permet de récupérer les données pour un moment donné (Datetime).
+    La valeur de datetime est utilisée pour effectuer la recherche.
+    """
+    # Recherche des données pour la date donnée dans la table DimTime
+    time_data = session.exec(select(DimTime).where(DimTime.datetime_value == datetime_value)).first()
+
+    # Si aucune donnée n'est trouvée pour ce moment donné, on renvoie une erreur 404
+    if not time_data:
+        raise HTTPException(status_code=404, detail="Time not found")
+    
+    # Retourne les données pour ce moment précis
+    return time_data
+
+# ==============================
+# Routes pour FactsMeteo
+# ==============================
+
+@router.get("/meteo/{station_id}")
+async def get_meteo_data(
+    station_id: str,
+    session: Session = Depends(get_session)
+):
+    """
+    Cette route permet de récupérer toutes les données météorologiques pour une station donnée.
+    L'ID de la station est utilisé pour effectuer la recherche.
+    """
+    # Recherche des données météorologiques pour la station donnée
+    meteo_data = session.exec(select(FactsMeteo).where(FactsMeteo.station_id == station_id)).all()
+
+    # Si aucune donnée n'est trouvée pour cette station, on renvoie une erreur 404
+    if not meteo_data:
+        raise HTTPException(status_code=404, detail="No meteo data found for this station")
+    
+    # Retourne toutes les données météorologiques pour la station donnée
+    return meteo_data
+
+@router.get("/meteo/{station_id}/date/{date}")
+async def get_meteo_data_by_date(
+    station_id: str,
+    date: datetime,
+    session: Session = Depends(get_session)
+):
+    """
+    Cette route permet de récupérer les données météorologiques pour une station à une date spécifique.
+    La station et la date sont utilisées pour effectuer la recherche.
+    """
+    # Recherche des données météorologiques pour la station et la date spécifiques
+    meteo_data = session.exec(select(FactsMeteo).where(
+        FactsMeteo.station_id == station_id,
+        FactsMeteo.datetime_value == date
+    )).first()
+
+    # Si aucune donnée n'est trouvée, on renvoie une erreur 404
+    if not meteo_data:
+        raise HTTPException(status_code=404, detail="No meteo data found for this station on this date")
+    
+    # Retourne les données météorologiques pour cette station à la date donnée
+    return meteo_data
+
+# ==============================
+# Calcul de la Moyenne Mobile sur 7 Jours pour les données météos
+# ==============================
+
+@router.get("/meteo/{station_id}/moving_avg/7days/{date}")
+async def get_moving_avg_7days_meteo(
+    station_id: str,
+    date: datetime,
+    session: Session = Depends(get_session)
+):
+    """
+    Cette route permet de calculer la moyenne mobile des températures pour les 7 derniers jours,
+    à partir de la date donnée.
+    """
+    # Détermine la date de début (7 jours avant la date donnée)
+    start_date = date - timedelta(days=6)
+    
+    # Recherche des données météorologiques entre la date de début et la date donnée
+    meteo_data = session.exec(select(FactsMeteo).join(DimTime, FactsMeteo.datetime_value == DimTime.datetime_value)
+                              .where(FactsMeteo.station_id == station_id)
+                              .where(DimTime.datetime_value.between(start_date, date))).all()
+
+    # Si aucune donnée n'est trouvée dans la plage de dates, on renvoie une erreur 404
+    if not meteo_data:
+        raise HTTPException(status_code=404, detail="No meteo data found for this station in the given date range")
+
+    # Calcul de la moyenne des températures sur la période donnée (7 jours)
+    avg_temp = sum([data.temperature_c for data in meteo_data if data.temperature_c is not None]) / len(meteo_data)
+    
+    # Retourne la moyenne des températures pour la station et la période donnée
     return {
-        "column": column.value,
-        "start_date": start_date,
-        "end_date": end_date,
-        "median": median
+        "station_id": station_id,
+        "date": date,
+        "7_day_moving_avg_temperature": avg_temp
     }
 
-#### Get min and max of a numeric column
+# ==============================
+# Routes pour FactsOcean
+# ==============================
 
-@router.get("/silver/min_max/{column}")
-async def get_min_max_meteo_data(
-    column: NumericColumns
+@router.get("/ocean/{station_id}")
+async def get_ocean_data(
+    station_id: str,
+    session: Session = Depends(get_session)
 ):
-    async with engine.connect() as conn:
-        stmt = select(func.min(table_silver.c[column.value]), func.max(table_silver.c[column.value])).where(
-            table_silver.c[column.value].isnot(None)
-        )
-        result = await conn.execute(stmt)
-        min_value, max_value = result.fetchone()
-        if min_value is None or max_value is None:
-            raise HTTPException(status_code=404, detail="No data found for the given column.")
-        return {
-            "column": column.value,
-            "min": min_value,
-            "max": max_value
-        }  
+    """
+    Cette route permet de récupérer toutes les données océaniques pour une station donnée.
+    L'ID de la station est utilisé pour effectuer la recherche.
+    """
+    # Recherche des données océaniques pour la station donnée
+    ocean_data = session.exec(select(FactsOcean).where(FactsOcean.station_id == station_id)).all()
 
-# GET MODE of one or several numeric columns
-
-@router.get("/silver/mode")
-async def get_mode_meteo_data(
-    columns: Annotated[List[NumericColumns], Query(...)]
-):
-    async with engine.connect() as conn:
-        stmt = select(*[
-            func.mode().within_group(getattr(table_silver.c, col.value)).label(col.value)
-            for col in columns
-        ])
-        result = await conn.execute(stmt)
-        modes = result.fetchone()
-        if not modes or any(v is None for v in modes):
-            raise HTTPException(status_code=404, detail="No data found for the given columns.")
-        return {
-            "columns": [col.value for col in columns],
-            "modes": dict(zip([col.value for col in columns], modes))
-        }
-
-# GET STANDARD DEVIATION of one or several numeric columns
-@router.get("/silver/std_dev")
-async def get_std_dev_meteo_data(
-    columns: Annotated[List[NumericColumns], Query(...)]
-):
-    async with engine.connect() as conn:
-        stmt = select(*[
-            func.stddev(getattr(table_silver.c, col.value)).label(col.value)
-            for col in columns
-        ])
-        result = await conn.execute(stmt)
-        stds = result.fetchone()
-        if not stds or any(v is None for v in stds):
-            raise HTTPException(status_code=404, detail="No data found for the given columns.")
-        return {
-            "columns": [col.value for col in columns],
-            "std_devs": dict(zip([col.value for col in columns], stds))
-        }
-
-
-# GET CORRELATION coefficient between two numeric columns
-
-@router.get("/silver/correlation/{column1: NumericColumns}/{column2: NumericColumns}")
-async def get_correlation_meteo_data(
-    column1: NumericColumns,
-    column2: NumericColumns
-):
-    async with engine.connect() as conn:
-        stmt = select(func.corr(getattr(table_silver.c, column1.value), getattr(table_silver.c, column2.value)))
-        result = await conn.execute(stmt)
-        correlation = result.scalar()
-        if correlation is None:
-            raise HTTPException(status_code=404, detail="No data found for the given columns.")
-        return {
-            "column1": column1.value,
-            "column2": column2.value,
-            "correlation": correlation
-        }
-
-# GET PERCENTILES of one or several numeric columns
-
-@router.get("/silver/percentiles")
-async def get_percentiles_meteo_data(
-    columns: Annotated[List[NumericColumns], Query()],
-    percentiles: Annotated[List[int], Query()] = [50, 75, 90]
-):
-    if any(p < 0 or p > 100 for p in percentiles):
-        raise HTTPException(status_code=400, detail="Percentiles must be between 0 and 100.")
+    # Si aucune donnée n'est trouvée pour cette station, on renvoie une erreur 404
+    if not ocean_data:
+        raise HTTPException(status_code=404, detail="No ocean data found for this station")
     
-    async with engine.connect() as conn:
-        result_data = {}
-        for col in columns:
-            col_results = {}
-            for p in percentiles:
-                stmt = select(
-                    func.percentile_cont(p / 100.0)
-                    .within_group(getattr(table_silver.c, col.value))
-                )
-                res = await conn.execute(stmt)
-                value = res.scalar()
-                col_results[str(p)] = value
-            result_data[col.value] = col_results
+    # Retourne toutes les données océaniques pour la station donnée
+    return ocean_data
 
-        return {
-            "percentiles": percentiles,
-            "results": result_data
-        }
-
-
-#  GET correlation matrix between all numeric columns
-
-@router.get("/silver/correlation_matrix")
-async def get_correlation_matrix_meteo_data():
-    numeric_columns = [col.value for col in NumericColumns]
-    async with engine.connect() as conn:
-        stmt = select(*[
-            func.corr(getattr(table_silver.c, col1), getattr(table_silver.c, col2)).label(f"{col1}_{col2}")
-            for col1 in numeric_columns
-            for col2 in numeric_columns
-            if col1!= col2
-        ])
-        result = await conn.execute(stmt)
-        correlation_matrix = result.fetchall()
-        return {
-            "columns": numeric_columns,
-            "correlation_matrix": [[corr[0] for corr in row] for row in correlation_matrix]
-        }
-
-# GET HISTOGRAM of one numeric column
-
-@router.get("/silver/histogram/{column: NumericColumns}")
-async def get_histogram_meteo_data(
-    column: NumericColumns
+@router.get("/ocean/{station_id}/date/{date}")
+async def get_ocean_data_by_date(
+    station_id: str,
+    date: datetime,
+    session: Session = Depends(get_session)
 ):
-    async with engine.connect() as conn:
-        stmt = select(func.histogram(getattr(table_silver.c, column.value), 100)).label(column.value)
-        result = await conn.execute(stmt)
-        histogram = result.fetchone()
-        if histogram is None or histogram[column.value] is None:
-            raise HTTPException(status_code=404, detail="No data found for the given column.")
-        return {
-            "column": column.value,
-            "histogram": histogram[column.value]
-        }
+    """
+    Cette route permet de récupérer les données océaniques pour une station à une date spécifique.
+    La station et la date sont utilisées pour effectuer la recherche.
+    """
+    # Recherche des données océaniques pour la station et la date spécifiées
+    ocean_data = session.exec(select(FactsOcean).where(
+        FactsOcean.station_id == station_id,
+        FactsOcean.datetime_value == date
+    )).first()
 
-# GET LINEAR REGRESSION model for one numeric column
-@router.get("/silver/linear_regression/{column: NumericColumns}")
-async def get_linear_regression_meteo_data(
-    column: NumericColumns
-):
-    async with engine.connect() as conn:
-        stmt = select(
-            func.corr(getattr(table_silver.c, column.value), table_silver.c.Temperature).label("correlation"),
-            func.linear_regression_slope(getattr(table_silver.c, column.value), table_silver.c.Temperature).label("slope"),
-            func.linear_regression_intercept(getattr(table_silver.c, column.value), table_silver.c.Temperature).label("intercept")
-        )
-        result = await conn.execute(stmt)
-        regression_data = result.fetchone()
-        if regression_data is None or any(v is None for v in regression_data):
-            raise HTTPException(status_code=404, detail="No data found for the given column.")
-        return {
-            "column": column.value,
-            "correlation": regression_data["correlation"],
-            "slope": regression_data["slope"],
-            "intercept": regression_data["intercept"]
-        }
-
-# GET K-MEANS clustering for one numeric column
-@router.get("/silver/kmeans/{column: NumericColumns}")
-async def get_kmeans_meteo_data(
-    column: NumericColumns
-):
-    async with engine.connect() as conn:
-        stmt = select(func.kmeans(getattr(table_silver.c, column.value), 3).label("clusters"))
-        result = await conn.execute(stmt)
-        clusters = result.fetchone()
-        if clusters is None or clusters["clusters"] is None:
-            raise HTTPException(status_code=404, detail="No data found for the given column.")
-        return {
-            "column": column.value,
-            "clusters": clusters["clusters"]
-        }
+    # Si aucune donnée n'est trouvée, on renvoie une erreur 404
+    if not ocean_data:
+        raise HTTPException(status_code=404, detail="No ocean data found for this station on this date")
     
+    # Retourne les données océaniques pour cette station à la date donnée
+    return ocean_data
 
+# ==============================
+# Calcul de la Moyenne Mobile sur 7 Jours pour les données océaniques
+# ==============================
 
+@router.get("/ocean/{station_id}/moving_avg/7days/{date}")
+async def get_moving_avg_7days_ocean(
+    station_id: str,
+    date: datetime,
+    session: Session = Depends(get_session)
+):
+    """
+    Cette route permet de calculer la moyenne mobile de la hauteur des vagues pour les 7 derniers jours,
+    à partir de la date donnée.
+    """
+    # Détermine la date de début (7 jours avant la date donnée)
+    start_date = date - timedelta(days=6)
 
+    # Recherche des données océaniques entre la date de début et la date donnée
+    ocean_data = session.exec(select(FactsOcean).join(DimTime, FactsOcean.datetime_value == DimTime.datetime_value)
+                              .where(FactsOcean.station_id == station_id)
+                              .where(DimTime.datetime_value.between(start_date, date))).all()
 
+    # Si aucune donnée n'est trouvée dans la plage de dates, on renvoie une erreur 404
+    if not ocean_data:
+        raise HTTPException(status_code=404, detail="No ocean data found for this station in the given date range")
 
-
-
-
-
-
-
-
+    # Calcul de la moyenne de la hauteur des vagues sur la période donnée (7 jours)
+    avg_wave_height = sum([data.wave_height for data in ocean_data if data.wave_height is not None]) / len(ocean_data)
+    
+    # Retourne la moyenne de la hauteur des vagues pour la station et la période donnée
+    return {
+        "station_id": station_id,
+        "date": date,
+        "7_day_moving_avg_wave_height": avg_wave_height
+    }
