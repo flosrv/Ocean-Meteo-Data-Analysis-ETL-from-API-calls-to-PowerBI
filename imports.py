@@ -13,6 +13,7 @@ from urllib.error import HTTPError
 from requests.exceptions import HTTPError as RequestsHTTPError
 from IPython.display import display, HTML
 
+import folium
 import retry_requests
 from retry_requests import retry
 import requests_cache
