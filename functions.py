@@ -163,18 +163,8 @@ def handle_null_values(df):
     return df
 
 def meteo_api_request(coordinates, mode='historical', days=92, interval='hourly'):
-    """
-    Fonction pour récupérer les données météo depuis l'API Open-Meteo avec cache et réessayer en cas d'erreur.
-    
-    Paramètres:
-        coordinates (list) : liste de coordonnées [latitude, longitude]
-        mode (str) : intervalle de données ('forecast' ou 'historical', par défaut 'historical')
-        days (int) : nombre de jours dans le passé ou dans le futur (par défaut : 92 pour historique)
-        interval (str) : intervalle des données ('hourly' ou 'daily', par défaut 'hourly')
 
-    Retourne :
-        pd.DataFrame : un DataFrame avec les données météo
-    """
+
     # Fonction utilitaire pour convertir les coordonnées avec ou sans suffixe (ex: '45.5W', '-45.5')
     def parse_coordinates(coord):
         # Vérifie si la coordonnée a un suffixe de direction (W, E, N, S)
@@ -185,8 +175,8 @@ def meteo_api_request(coordinates, mode='historical', days=92, interval='hourly'
             direction = match.group(3)
             
             if direction == 'W' or direction == 'S':
-                value = -abs(value)  # Si direction est Ouest ou Sud, on inverse la valeur
-            
+                value = -abs(value) 
+                
             return value
         else:
             raise ValueError(f"Coordonnée invalide : {coord}")
